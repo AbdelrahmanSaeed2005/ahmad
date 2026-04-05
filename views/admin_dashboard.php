@@ -1,0 +1,293 @@
+<?php
+/* File Path: admin_dashboard.php */
+require_once '../includes/db_connect.php';
+require_once '../includes/auth.php';
+
+// --- 1. معالجة البيانات (Logic - لم يتم التغيير) ---
+if(isset($_POST['adjust_balance'])) {
+    $wallet = $_POST['wallet_name'];
+    $amount = (float)$_POST['amount'];
+    $type = $_POST['adj_type']; 
+    if($type == 'add') {
+        $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")->execute([$amount, $wallet]);
+        header("Location: admin_dashboard.php?msg=updated"); exit();
+    } else {
+        $stmt_check = $pdo->prepare("SELECT balance FROM wallets WHERE wallet_name = ?");
+        $stmt_check->execute([$wallet]);
+        $current_balance = (float)$stmt_check->fetchColumn();
+        if ($amount > $current_balance) {
+            header("Location: admin_dashboard.php?error=insufficient&wallet=" . urlencode($wallet)); exit();
+        } else {
+            $pdo->prepare("UPDATE wallets SET balance = balance - ? WHERE wallet_name = ?")->execute([$amount, $wallet]);
+            $pdo->prepare("INSERT INTO cash_transactions (type, amount, description, user_id) VALUES ('income', ?, 'سحب من محفظة', ?)")->execute([$amount, $_SESSION['user_id']]);
+            header("Location: admin_dashboard.php?msg=updated"); exit();
+        }
+    }
+}
+
+// جلب البيانات الإحصائية (Logic - لم يتم التغيير)
+$last_withdraw = $pdo->query("SELECT MAX(created_at) FROM profit_withdrawals")->fetchColumn();
+$filter_date = $last_withdraw ? $last_withdraw : '2000-01-01 00:00:00';
+$today = date('Y-m-d');
+
+// مبيعات اليوم (مع خصم المرتجعات)
+$stmt = $pdo->prepare("SELECT (SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE type='income' AND related_type='sale' AND DATE(created_at) = ?) - (SELECT COALESCE(SUM(amount), 0) FROM cash_transactions WHERE related_type='return' AND DATE(created_at) = ?)");
+$stmt->execute([$today, $today]);
+$today_sales = $stmt->fetchColumn() ?: 0;
+
+// المصاريف
+$stmt = $pdo->prepare("SELECT SUM(amount) FROM expenses WHERE created_at > ?");
+$stmt->execute([$filter_date]);
+$total_expenses = $stmt->fetchColumn() ?: 0;
+
+// أرباح المبيعات (يشمل الكريد لأن الربح مرتبط ببيع البضاعة وليس بوقت التحصيل)
+$stmt = $pdo->prepare("SELECT SUM((ii.price - p.cost_price) * ii.quantity) FROM invoice_items ii JOIN products p ON ii.product_id = p.id JOIN invoices i ON ii.invoice_id = i.id WHERE i.created_at > ?");
+$stmt->execute([$filter_date]);
+$sales_profit = $stmt->fetchColumn() ?: 0;
+
+// خسائر المرتجعات
+$stmt = $pdo->prepare("SELECT SUM((r.return_price - (p.cost_price * r.quantity))) FROM returns r JOIN products p ON r.product_id = p.id WHERE r.created_at > ?");
+$stmt->execute([$filter_date]);
+$returns_loss = $stmt->fetchColumn() ?: 0;
+$gross_profit = $sales_profit - $returns_loss;
+$net_profit = $gross_profit - $total_expenses;
+
+// ديون العملاء
+$total_customer_debts = $pdo->query("SELECT SUM(balance) FROM customers")->fetchColumn() ?: 0;
+
+// الخزنة الرئيسية
+$cash_in_hand = (float) ($pdo->query("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) FROM cash_transactions WHERE payment_method='cash'")->fetchColumn() ?: 0);
+
+// نواقص المخزن
+$low_stock_count = $pdo->query("SELECT COUNT(*) FROM products WHERE stock_quantity <= 5 AND deleted_at IS NULL")->fetchColumn();
+
+// ✅ التأكد من وجود جدول wallets بالهيكل الصحيح
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS `wallets` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `wallet_name` varchar(50) NOT NULL,
+        `balance` decimal(10,2) DEFAULT 0.00,
+        `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `wallet_name` (`wallet_name`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+
+// ✅ التأكد من وجود سجلات الفودافون والبنك في جدول wallets
+$pdo->exec("INSERT INTO wallets (wallet_name, balance) SELECT 'vodafone', 0 WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_name = 'vodafone')");
+$pdo->exec("INSERT INTO wallets (wallet_name, balance) SELECT 'bank', 0 WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_name = 'bank')");
+
+// ✅ تحديث أرصدة الفودافون والبنك من cash_transactions
+$pdo->exec("
+    UPDATE wallets w 
+    SET balance = (
+        SELECT COALESCE(SUM(CASE WHEN ct.type = 'income' THEN ct.amount ELSE -ct.amount END), 0)
+        FROM cash_transactions ct 
+        WHERE ct.payment_method = 'vodafone'
+    )
+    WHERE w.wallet_name = 'vodafone'
+");
+
+$pdo->exec("
+    UPDATE wallets w 
+    SET balance = (
+        SELECT COALESCE(SUM(CASE WHEN ct.type = 'income' THEN ct.amount ELSE -ct.amount END), 0)
+        FROM cash_transactions ct 
+        WHERE ct.payment_method = 'bank'
+    )
+    WHERE w.wallet_name = 'bank'
+");
+
+$wallets = $pdo->query("SELECT * FROM wallets")->fetchAll();
+
+require_once '../includes/header.php'; 
+?>
+
+<style>
+    :root {
+        --erp-bg: #f8fafc;
+        --erp-card: #ffffff;
+        --erp-text-main: #1e293b;
+        --erp-text-muted: #64748b;
+        --erp-border: #e2e8f0;
+        --erp-primary: #4f46e5;
+        --erp-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Dark Mode Class */
+    [data-theme="dark"] {
+        --erp-bg: #0f172a;
+        --erp-card: #1e293b;
+        --erp-text-main: #f1f5f9;
+        --erp-text-muted: #94a3b8;
+        --erp-border: #334155;
+        --erp-primary: #818cf8;
+        --erp-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    body { background-color: var(--erp-bg); color: var(--erp-text-main); font-family: 'Inter', system-ui, sans-serif; transition: all 0.3s ease; }
+    
+    /* Fix Visibility Issues */
+    .text-dark, h2, h3, h4, h5, .card-title { color: var(--erp-text-main) !important; }
+    .text-muted { color: var(--erp-text-muted) !important; }
+    
+    .card { background-color: var(--erp-card); border: 1px solid var(--erp-border); box-shadow: var(--erp-shadow); border-radius: 12px; }
+    .list-group-item { background-color: var(--erp-card); border-color: var(--erp-border); color: var(--erp-text-main); }
+    .list-group-item:hover { background-color: var(--erp-bg); }
+
+    /* Inputs Fix for Dark Mode */
+    .form-control, .form-select { background-color: var(--erp-bg); border-color: var(--erp-border); color: var(--erp-text-main); }
+    .form-control:focus { background-color: var(--erp-bg); color: var(--erp-text-main); border-color: var(--erp-primary); }
+    .modal-content { background-color: var(--erp-card); border: 1px solid var(--erp-border); color: var(--erp-text-main); }
+
+    /* Buttons Contrast */
+    .btn-primary { background-color: var(--erp-primary); border-color: var(--erp-primary); }
+    .theme-toggle { cursor: pointer; padding: 8px 15px; border-radius: 50px; border: 1px solid var(--erp-border); background: var(--erp-card); color: var(--erp-text-main); }
+</style>
+
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="h4 fw-bold mb-0 text-dark"><i class="bi bi-speedometer2 text-primary"></i> لوحة الإدارة</h2>
+            <div class="text-muted small">آخر تصفية: <span class="badge bg-secondary opacity-75"><?= $last_withdraw ?: 'لا يوجد' ?></span></div>
+        </div>
+        <button onclick="toggleTheme()" class="theme-toggle shadow-sm">
+            <i id="theme-icon" class="bi bi-moon-stars"></i> <span class="d-none d-md-inline ms-2">تبديل الوضع</span>
+        </button>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <?php 
+        $stats = [
+            ['title' => 'ربح البضاعة', 'value' => $gross_profit, 'bg' => 'primary', 'icon' => 'graph-up-arrow'],
+            ['title' => 'إجمالي المصاريف', 'value' => $total_expenses, 'bg' => 'danger', 'icon' => 'cash-stack'],
+            ['title' => 'صافي الربح', 'value' => $net_profit, 'bg' => 'success', 'icon' => 'wallet2'],
+            ['title' => 'مبيعات اليوم', 'value' => $today_sales, 'bg' => 'info', 'icon' => 'cart-check']
+        ];
+        foreach($stats as $stat): ?>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm" style="border-right: 4px solid var(--bs-<?= $stat['bg'] ?>) !important;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="text-muted small fw-bold mb-2"><?= $stat['title'] ?></h6>
+                            <h3 class="mb-0 fw-bold"><?= number_format($stat['value'], 2) ?></h3>
+                        </div>
+                        <div class="text-<?= $stat['bg'] ?> fs-3 opacity-50"><i class="bi bi-<?= $stat['icon'] ?>"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-md-8">
+            <h5 class="fw-bold mb-3"><i class="bi bi-bank me-2"></i> السيولة والمحافظ</h5>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body text-center py-4">
+                            <p class="text-muted mb-2 small">الخزنة الرئيسية (كاش)</p>
+                            <h4 class="text-success fw-bold"><?= number_format($cash_in_hand, 2) ?></h4>
+                        </div>
+                    </div>
+                </div>
+                <?php foreach($wallets as $w): ?>
+                <div class="col-md-4">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body d-flex justify-content-between align-items-center">
+                            <div>
+                                <p class="text-muted mb-1 small"><?= strtoupper($w['wallet_name']) ?></p>
+                                <h5 class="mb-0 fw-bold"><?= number_format($w['balance'], 2) ?></h5>
+                            </div>
+                            <button class="btn btn-sm btn-light border shadow-sm" data-bs-toggle="modal" data-bs-target="#adjModal<?= $w['id'] ?>"><i class="bi bi-pencil-square"></i></button>
+                        </div>
+                    </div>
+                    
+                    <div class="modal fade" id="adjModal<?= $w['id'] ?>" tabindex="-1">
+                        <div class="modal-dialog modal-sm modal-dialog-centered">
+                            <form method="POST" class="modal-content border-0 shadow-lg">
+                                <div class="modal-header"><h5>تعديل رصيد</h5></div>
+                                <div class="modal-body text-start">
+                                    <input type="hidden" name="wallet_name" value="<?= $w['wallet_name'] ?>">
+                                    <label class="small mb-1">العملية:</label>
+                                    <select name="adj_type" class="form-select mb-3">
+                                        <option value="add">إيداع (+)</option>
+                                        <option value="sub">سحب (-)</option>
+                                    </select>
+                                    <label class="small mb-1">المبلغ:</label>
+                                    <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required>
+                                </div>
+                                <div class="modal-footer">
+                                    <button name="adjust_balance" class="btn btn-primary w-100">تحديث</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <div class="card bg-warning bg-opacity-10 border-warning border-opacity-25 shadow-none">
+                        <div class="card-body">
+                            <p class="text-muted mb-1 small">ديون العملاء</p>
+                            <h5 class="mb-0 fw-bold text-warning-emphasis"><?= number_format($total_customer_debts, 2) ?> ج.م</h5>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card bg-danger bg-opacity-10 border-danger border-opacity-25 shadow-none">
+                        <div class="card-body">
+                            <p class="text-muted mb-1 small">نواقص المخزن</p>
+                            <h5 class="mb-0 fw-bold text-danger"><?= $low_stock_count ?> أصناف</h5>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <h5 class="fw-bold mb-3">إجراءات سريعة</h5>
+            <div class="card border-0 shadow-sm overflow-hidden">
+                <div class="list-group list-group-flush">
+                    <a href="pos.php" class="list-group-item list-group-item-action py-3 border-0"><i class="bi bi-cart-plus text-primary me-3"></i> شاشة البيع</a>
+                    <a href="expenses.php" class="list-group-item list-group-item-action py-3 border-0"><i class="bi bi-receipt text-danger me-3"></i> تسجيل مصاريف</a>
+                    <a href="customers.php" class="list-group-item list-group-item-action py-3 border-0"><i class="bi bi-people text-info me-3"></i> حسابات العملاء</a>
+                    <a href="withdrawals.php" class="list-group-item list-group-item-action py-4 bg-primary text-white text-center fw-bold border-0">
+                        تصفية الأرباح النهائية <i class="bi bi-arrow-left ms-2"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function toggleTheme() {
+        const body = document.documentElement;
+        const icon = document.getElementById('theme-icon');
+        const currentTheme = body.getAttribute('data-theme');
+        
+        if (currentTheme === 'dark') {
+            body.setAttribute('data-theme', 'light');
+            icon.className = 'bi bi-moon-stars';
+            localStorage.setItem('theme', 'light');
+        } else {
+            body.setAttribute('data-theme', 'dark');
+            icon.className = 'bi bi-sun';
+            localStorage.setItem('theme', 'dark');
+        }
+    }
+
+    // حفظ الوضع المفضل للمستخدم
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        document.getElementById('theme-icon').className = savedTheme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+    });
+</script>
+
+<?php require_once '../includes/footer.php'; ?>

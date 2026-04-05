@@ -1,0 +1,18 @@
+# ERP_System_V2/.htaccess
+
+# منع تصفح المجلدات
+Options -Indexes
+
+# حماية ملفات الإعدادات
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+<Files db_connect.php>
+    Order allow,deny
+    Deny from all
+</Files>
+
+# توجيه الطلبات (اختياري حسب الحاجة مستقبلاً)
+RewriteEngine On

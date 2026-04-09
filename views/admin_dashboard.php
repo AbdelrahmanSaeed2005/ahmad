@@ -3,26 +3,77 @@
 require_once '../includes/db_connect.php';
 require_once '../includes/auth.php';
 
-// --- 1. معالجة البيانات (Logic - لم يتم التغيير) ---
-if(isset($_POST['adjust_balance'])) {
-    $wallet = $_POST['wallet_name'];
-    $amount = (float)$_POST['amount'];
-    $type = $_POST['adj_type']; 
-    if($type == 'add') {
-        $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")->execute([$amount, $wallet]);
-        header("Location: admin_dashboard.php?msg=updated"); exit();
-    } else {
-        $stmt_check = $pdo->prepare("SELECT balance FROM wallets WHERE wallet_name = ?");
-        $stmt_check->execute([$wallet]);
-        $current_balance = (float)$stmt_check->fetchColumn();
-        if ($amount > $current_balance) {
-            header("Location: admin_dashboard.php?error=insufficient&wallet=" . urlencode($wallet)); exit();
-        } else {
-            $pdo->prepare("UPDATE wallets SET balance = balance - ? WHERE wallet_name = ?")->execute([$amount, $wallet]);
-            $pdo->prepare("INSERT INTO cash_transactions (type, amount, description, user_id) VALUES ('income', ?, 'سحب من محفظة', ?)")->execute([$amount, $_SESSION['user_id']]);
-            header("Location: admin_dashboard.php?msg=updated"); exit();
-        }
+// --- 1. إيداع / سحب — يُسجَّل في cash_transactions ليظهر في التقارير ويُحدّث أرصدة المحافظ ---
+if (isset($_POST['adjust_balance'])) {
+    $channel = trim((string) ($_POST['wallet_name'] ?? ''));
+    $amount = (float) ($_POST['amount'] ?? 0);
+    $adjType = $_POST['adj_type'] ?? '';
+
+    $allowed = ['cash', 'vodafone', 'bank'];
+    if (!in_array($channel, $allowed, true) || $amount <= 0 || !in_array($adjType, ['add', 'sub'], true)) {
+        header('Location: admin_dashboard.php?error=invalid');
+        exit();
     }
+
+    $balStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0)
+         FROM cash_transactions WHERE payment_method = ?"
+    );
+    $balStmt->execute([$channel]);
+    $currentBalance = (float) $balStmt->fetchColumn();
+
+    if ($adjType === 'sub' && $amount > $currentBalance + 0.0001) {
+        header('Location: admin_dashboard.php?error=insufficient&wallet=' . urlencode($channel));
+        exit();
+    }
+
+    $labels = [
+        'cash' => 'الخزنة الرئيسية (كاش)',
+        'vodafone' => 'فودافون كاش',
+        'bank' => 'البنك',
+    ];
+    $label = $labels[$channel] ?? $channel;
+
+    try {
+        if ($adjType === 'add') {
+            recordTransaction($pdo, [
+                'direction' => 'in',
+                'amount' => $amount,
+                'payment_method' => $channel,
+                'description' => 'إيداع يدوي — ' . $label,
+                'user_id' => (int) $_SESSION['user_id'],
+                'related_type' => 'wallet_adjustment',
+            ]);
+        } else {
+            recordTransaction($pdo, [
+                'direction' => 'out',
+                'amount' => $amount,
+                'payment_method' => $channel,
+                'description' => 'سحب يدوي — ' . $label,
+                'user_id' => (int) $_SESSION['user_id'],
+                'related_type' => 'wallet_adjustment',
+            ]);
+        }
+
+        $pdo->exec(
+            "UPDATE wallets w SET balance = (
+                SELECT COALESCE(SUM(CASE WHEN ct.type = 'income' THEN ct.amount ELSE -ct.amount END), 0)
+                FROM cash_transactions ct WHERE ct.payment_method = 'vodafone'
+            ) WHERE w.wallet_name = 'vodafone'"
+        );
+        $pdo->exec(
+            "UPDATE wallets w SET balance = (
+                SELECT COALESCE(SUM(CASE WHEN ct.type = 'income' THEN ct.amount ELSE -ct.amount END), 0)
+                FROM cash_transactions ct WHERE ct.payment_method = 'bank'
+            ) WHERE w.wallet_name = 'bank'"
+        );
+    } catch (Throwable $e) {
+        header('Location: admin_dashboard.php?error=failed');
+        exit();
+    }
+
+    header('Location: admin_dashboard.php?msg=updated');
+    exit();
 }
 
 // جلب البيانات الإحصائية (Logic - لم يتم التغيير)
@@ -156,6 +207,23 @@ require_once '../includes/header.php';
         </button>
     </div>
 
+    <?php
+    $dashMsg = $_GET['msg'] ?? '';
+    $dashErr = $_GET['error'] ?? '';
+    $dashWallet = $_GET['wallet'] ?? '';
+    $walletAr = ['cash' => 'الخزنة الرئيسية', 'vodafone' => 'فودافون كاش', 'bank' => 'البنك'];
+    if ($dashMsg === 'updated') {
+        echo '<div class="alert alert-success border-0 shadow-sm rounded-3 mb-4"><i class="bi bi-check-circle me-2"></i>تم تسجيل العملية في حركة النقدية والتقارير.</div>';
+    }
+    if ($dashErr === 'insufficient') {
+        $wn = $walletAr[$dashWallet] ?? $dashWallet;
+        echo '<div class="alert alert-danger border-0 shadow-sm rounded-3 mb-4"><i class="bi bi-exclamation-triangle me-2"></i>الرصيد غير كافٍ للسحب من: ' . htmlspecialchars($wn) . '</div>';
+    }
+    if ($dashErr === 'invalid' || $dashErr === 'failed') {
+        echo '<div class="alert alert-warning border-0 shadow-sm rounded-3 mb-4"><i class="bi bi-info-circle me-2"></i>تعذر تنفيذ العملية. تحقق من البيانات.</div>';
+    }
+    ?>
+
     <div class="row g-3 mb-4">
         <?php 
         $stats = [
@@ -187,40 +255,78 @@ require_once '../includes/header.php';
             <div class="row g-3">
                 <div class="col-md-4">
                     <div class="card h-100 shadow-sm">
-                        <div class="card-body text-center py-4">
-                            <p class="text-muted mb-2 small">الخزنة الرئيسية (كاش)</p>
-                            <h4 class="text-success fw-bold"><?= number_format($cash_in_hand, 2) ?></h4>
+                        <div class="card-body d-flex justify-content-between align-items-center py-4">
+                            <div class="text-center text-md-start flex-grow-1">
+                                <p class="text-muted mb-1 small">الخزنة الرئيسية (كاش)</p>
+                                <h4 class="text-success fw-bold mb-0"><?= number_format($cash_in_hand, 2) ?> <small class="fs-6">ج.م</small></h4>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-light border shadow-sm" data-bs-toggle="modal" data-bs-target="#adjModalCash" title="إيداع أو سحب كاش">
+                                <i class="bi bi-pencil-square"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="modal fade" id="adjModalCash" tabindex="-1">
+                        <div class="modal-dialog modal-sm modal-dialog-centered">
+                            <form method="POST" class="modal-content border-0 shadow-lg">
+                                <div class="modal-header border-0 pb-0">
+                                    <h5 class="modal-title fw-bold">الخزنة الرئيسية (كاش)</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body text-start">
+                                    <input type="hidden" name="wallet_name" value="cash">
+                                    <label class="small mb-1">العملية</label>
+                                    <select name="adj_type" class="form-select mb-3" required>
+                                        <option value="add">إيداع (+)</option>
+                                        <option value="sub">سحب (−)</option>
+                                    </select>
+                                    <label class="small mb-1">المبلغ (ج.م)</label>
+                                    <input type="number" step="0.01" min="0.01" name="amount" class="form-control" placeholder="0.00" required>
+                                    <p class="text-muted small mt-2 mb-0">يُسجَّل في حركة النقدية ويظهر في التقارير ضمن الفترة.</p>
+                                </div>
+                                <div class="modal-footer border-0 pt-0">
+                                    <button type="submit" name="adjust_balance" value="1" class="btn btn-success w-100">تنفيذ</button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </div>
-                <?php foreach($wallets as $w): ?>
+                <?php foreach ($wallets as $w):
+                    $wn = $w['wallet_name'];
+                    if (!in_array($wn, ['vodafone', 'bank'], true)) {
+                        continue;
+                    }
+                    $wlabel = $wn === 'vodafone' ? 'فودافون كاش' : 'حساب البنك';
+                ?>
                 <div class="col-md-4">
                     <div class="card h-100 shadow-sm">
                         <div class="card-body d-flex justify-content-between align-items-center">
                             <div>
-                                <p class="text-muted mb-1 small"><?= strtoupper($w['wallet_name']) ?></p>
-                                <h5 class="mb-0 fw-bold"><?= number_format($w['balance'], 2) ?></h5>
+                                <p class="text-muted mb-1 small"><?= htmlspecialchars($wlabel) ?></p>
+                                <h5 class="mb-0 fw-bold"><?= number_format((float) $w['balance'], 2) ?> <small class="text-muted fs-6">ج.م</small></h5>
                             </div>
-                            <button class="btn btn-sm btn-light border shadow-sm" data-bs-toggle="modal" data-bs-target="#adjModal<?= $w['id'] ?>"><i class="bi bi-pencil-square"></i></button>
+                            <button type="button" class="btn btn-sm btn-light border shadow-sm" data-bs-toggle="modal" data-bs-target="#adjModal<?= (int) $w['id'] ?>"><i class="bi bi-pencil-square"></i></button>
                         </div>
                     </div>
-                    
-                    <div class="modal fade" id="adjModal<?= $w['id'] ?>" tabindex="-1">
+                    <div class="modal fade" id="adjModal<?= (int) $w['id'] ?>" tabindex="-1">
                         <div class="modal-dialog modal-sm modal-dialog-centered">
                             <form method="POST" class="modal-content border-0 shadow-lg">
-                                <div class="modal-header"><h5>تعديل رصيد</h5></div>
-                                <div class="modal-body text-start">
-                                    <input type="hidden" name="wallet_name" value="<?= $w['wallet_name'] ?>">
-                                    <label class="small mb-1">العملية:</label>
-                                    <select name="adj_type" class="form-select mb-3">
-                                        <option value="add">إيداع (+)</option>
-                                        <option value="sub">سحب (-)</option>
-                                    </select>
-                                    <label class="small mb-1">المبلغ:</label>
-                                    <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00" required>
+                                <div class="modal-header border-0 pb-0">
+                                    <h5 class="modal-title fw-bold"><?= htmlspecialchars($wlabel) ?></h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                 </div>
-                                <div class="modal-footer">
-                                    <button name="adjust_balance" class="btn btn-primary w-100">تحديث</button>
+                                <div class="modal-body text-start">
+                                    <input type="hidden" name="wallet_name" value="<?= htmlspecialchars($wn) ?>">
+                                    <label class="small mb-1">العملية</label>
+                                    <select name="adj_type" class="form-select mb-3" required>
+                                        <option value="add">إيداع (+)</option>
+                                        <option value="sub">سحب (−)</option>
+                                    </select>
+                                    <label class="small mb-1">المبلغ (ج.م)</label>
+                                    <input type="number" step="0.01" min="0.01" name="amount" class="form-control" placeholder="0.00" required>
+                                    <p class="text-muted small mt-2 mb-0">يُحدَّث رصيد المحفظة ويظهر في التقارير.</p>
+                                </div>
+                                <div class="modal-footer border-0 pt-0">
+                                    <button type="submit" name="adjust_balance" value="1" class="btn btn-primary w-100">تنفيذ</button>
                                 </div>
                             </form>
                         </div>

@@ -15,17 +15,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'check_barcode') {
     $barcode = $_GET['barcode'] ?? '';
     
     if (!empty($barcode)) {
-        $stmt = $pdo->prepare("SELECT id, name, barcode FROM products WHERE barcode = ? AND deleted_at IS NULL");
+        $stmt = $pdo->prepare(
+            "SELECT id, name, barcode, cost_price, selling_price, min_selling_price, stock_quantity 
+             FROM products WHERE barcode = ? AND deleted_at IS NULL"
+        );
         $stmt->execute([$barcode]);
-        $product = $stmt->fetch();
+        $product = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($product) {
             echo json_encode([
                 'exists' => true,
                 'product' => $product['name'],
                 'barcode' => $product['barcode'],
-                'message' => "⚠️ الباركود '{$barcode}' مستخدم بالفعل للمنتج: {$product['name']}"
-            ]);
+                'product_detail' => $product,
+                'message' => "سيتم إضافة الكمية لنفس المنتج: {$product['name']} (المخزون الحالي: {$product['stock_quantity']})"
+            ], JSON_UNESCAPED_UNICODE);
         } else {
             echo json_encode(['exists' => false]);
         }
@@ -598,6 +602,19 @@ function showToast(message, type = 'info', duration = 4000) {
 }
 
 // ========== Barcode Check Function ==========
+function fillPurchaseRowFromProduct(row, p) {
+    if (!p || !row) return;
+    const nameInp = row.querySelector('input[name*="[name]"]');
+    const priceInp = row.querySelector('.price');
+    const sellInp = row.querySelector('input[name*="[sell_p]"]');
+    const minInp = row.querySelector('input[name*="[min_p]"]');
+    if (nameInp && p.name) nameInp.value = p.name;
+    if (priceInp && p.cost_price != null && p.cost_price !== '') priceInp.value = Number(p.cost_price).toFixed(2);
+    if (sellInp && p.selling_price != null && p.selling_price !== '') sellInp.value = Number(p.selling_price).toFixed(2);
+    if (minInp && p.min_selling_price != null && p.min_selling_price !== '') minInp.value = Number(p.min_selling_price).toFixed(2);
+    calc();
+}
+
 function checkBarcode(input, row) {
     const barcode = input.value.trim();
     const warningDiv = row.querySelector('.barcode-warning');
@@ -615,11 +632,13 @@ function checkBarcode(input, row) {
             .then(res => res.json())
             .then(data => {
                 if (data.exists) {
-                    // هذا الباركود موجود مسبقاً -> نسمح بالعملية (سيتم تحديث نفس المنتج)
                     input.classList.remove('is-invalid');
                     input.classList.add('is-valid');
-                    warningDiv.innerHTML = `⚠️ ${data.message}`;
-                    showToast(data.message, 'warning');
+                    warningDiv.innerHTML = `✓ ${data.message}`;
+                    if (data.product_detail) {
+                        fillPurchaseRowFromProduct(row, data.product_detail);
+                    }
+                    showToast(data.message, 'info');
                 } else {
                     input.classList.remove('is-invalid');
                     input.classList.remove('is-valid');

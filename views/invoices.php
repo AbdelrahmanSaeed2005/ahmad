@@ -313,9 +313,23 @@ require_once '../includes/header.php';
                             <td>
                                 <?php 
                                 $pm = $inv['payment_method'];
-                                $pm_class = ($pm == 'cash') ? 'bg-success-subtle text-success' : 'bg-primary-subtle text-primary';
-                                $pm_icon = ($pm == 'cash') ? 'bi-cash-coin' : 'bi-credit-card';
-                                $pm_text = ($pm == 'cash') ? 'نقدي' : (($pm == 'vodafone') ? 'فودافون' : 'بنكي');
+                                if ($pm === 'cash') {
+                                    $pm_class = 'bg-success-subtle text-success';
+                                    $pm_icon = 'bi-cash-coin';
+                                    $pm_text = 'نقدي';
+                                } elseif ($pm === 'credit') {
+                                    $pm_class = 'bg-warning-subtle text-warning';
+                                    $pm_icon = 'bi-journal-text';
+                                    $pm_text = 'آجل';
+                                } elseif ($pm === 'vodafone') {
+                                    $pm_class = 'bg-primary-subtle text-primary';
+                                    $pm_icon = 'bi-phone';
+                                    $pm_text = 'فودافون';
+                                } else {
+                                    $pm_class = 'bg-primary-subtle text-primary';
+                                    $pm_icon = 'bi-bank';
+                                    $pm_text = 'بنكي';
+                                }
                                 ?>
                                 <span class="badge rounded-pill <?= $pm_class ?> px-3 border border-opacity-10">
                                     <i class="bi <?= $pm_icon ?> me-1"></i> <?= $pm_text ?>

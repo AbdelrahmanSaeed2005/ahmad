@@ -81,19 +81,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['add_product']) || is
     }
 }
 
-// --- 3b. AJAX: منتجات حسب الفئة ---
+// --- 3b. AJAX: منتجات (فئة + بحث + مخزون) — للواجهة الديناميكية ---
 if (isset($_GET['action']) && $_GET['action'] === 'products_by_category') {
     header('Content-Type: application/json; charset=utf-8');
     $cat = $_GET['category_id'] ?? 'all';
-    if ($cat === 'all' || $cat === '') {
-        $stmt = $pdo->query("SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.deleted_at IS NULL ORDER BY p.id DESC");
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    } else {
-        $cid = (int) $cat;
-        $stmt = $pdo->prepare("SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.deleted_at IS NULL AND p.category_id = ? ORDER BY p.id DESC");
-        $stmt->execute([$cid]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $q = trim($_GET['q'] ?? '');
+    $stock = $_GET['stock'] ?? 'all';
+    if (!in_array($stock, ['all', 'available', 'lowstock', 'outofstock'], true)) {
+        $stock = 'all';
     }
+    $where = ['p.deleted_at IS NULL'];
+    $params = [];
+    if ($cat !== 'all' && $cat !== '') {
+        $where[] = 'p.category_id = ?';
+        $params[] = (int) $cat;
+    }
+    if ($q !== '') {
+        $where[] = 'p.name LIKE ?';
+        $params[] = '%' . $q . '%';
+    }
+    if ($stock === 'available') {
+        $where[] = 'p.stock_quantity > 0';
+    } elseif ($stock === 'lowstock') {
+        $where[] = 'p.stock_quantity > 0 AND p.stock_quantity <= 5';
+    } elseif ($stock === 'outofstock') {
+        $where[] = 'p.stock_quantity = 0';
+    }
+    $whereSql = implode(' AND ', $where);
+    $sql = "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE $whereSql ORDER BY p.id DESC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     echo json_encode($rows, JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -116,10 +134,94 @@ if (isset($_GET['check_barcode'])) {
 }
 
 $categories = $pdo->query("SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY name")->fetchAll();
-$products = $pdo->query("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.deleted_at IS NULL ORDER BY p.id DESC")->fetchAll();
-$total_products = count($products);
+
+$allowedPer = [15, 20, 30, 50];
+$perPageRaw = $_GET['per_page'] ?? '15';
+$perPageAll = ($perPageRaw === 'all');
+$perPage = in_array((int) $perPageRaw, $allowedPer, true) ? (int) $perPageRaw : 15;
+$nameSearch = trim($_GET['name_search'] ?? '');
+$catFilter = $_GET['cat_filter'] ?? 'all';
+$stockFilter = $_GET['stock_filter'] ?? 'all';
+if (!in_array($stockFilter, ['all', 'available', 'lowstock', 'outofstock'], true)) {
+    $stockFilter = 'all';
+}
+
+$listWhere = ['p.deleted_at IS NULL'];
+$listParams = [];
+if ($catFilter !== 'all' && $catFilter !== '') {
+    $listWhere[] = 'p.category_id = ?';
+    $listParams[] = (int) $catFilter;
+}
+if ($nameSearch !== '') {
+    $listWhere[] = 'p.name LIKE ?';
+    $listParams[] = '%' . $nameSearch . '%';
+}
+if ($stockFilter === 'available') {
+    $listWhere[] = 'p.stock_quantity > 0';
+} elseif ($stockFilter === 'lowstock') {
+    $listWhere[] = 'p.stock_quantity > 0 AND p.stock_quantity <= 5';
+} elseif ($stockFilter === 'outofstock') {
+    $listWhere[] = 'p.stock_quantity = 0';
+}
+$listWhereSql = implode(' AND ', $listWhere);
+
+$countListStmt = $pdo->prepare("SELECT COUNT(*) FROM products p WHERE $listWhereSql");
+$countListStmt->execute($listParams);
+$listTotal = (int) $countListStmt->fetchColumn();
+
+$page = max(1, (int) ($_GET['page'] ?? 1));
+if ($perPageAll) {
+    $perPage = max(1, $listTotal);
+    $totalPages = 1;
+    $page = 1;
+    $offset = 0;
+} else {
+    $totalPages = max(1, (int) ceil($listTotal / $perPage));
+    if ($page > $totalPages) {
+        $page = $totalPages;
+    }
+    $offset = ($page - 1) * $perPage;
+}
+
+$sqlList = "SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE $listWhereSql ORDER BY p.id DESC";
+if (!$perPageAll) {
+    $sqlList .= ' LIMIT ' . (int) $perPage . ' OFFSET ' . (int) $offset;
+}
+$listStmt = $pdo->prepare($sqlList);
+$listStmt->execute($listParams);
+$products = $listStmt->fetchAll();
+
+$total_products = (int) $pdo->query("SELECT COUNT(*) FROM products WHERE deleted_at IS NULL")->fetchColumn();
 $zero_stock_products = $pdo->query("SELECT COUNT(*) FROM products WHERE deleted_at IS NULL AND stock_quantity = 0")->fetchColumn();
 $active_products = $pdo->query("SELECT COUNT(*) FROM products WHERE deleted_at IS NULL AND stock_quantity > 0")->fetchColumn();
+
+function products_list_url(array $overrides = []): string {
+    $params = [
+        'name_search' => $overrides['name_search'] ?? ($_GET['name_search'] ?? ''),
+        'cat_filter' => $overrides['cat_filter'] ?? ($_GET['cat_filter'] ?? 'all'),
+        'stock_filter' => $overrides['stock_filter'] ?? ($_GET['stock_filter'] ?? 'all'),
+        'per_page' => $overrides['per_page'] ?? ($_GET['per_page'] ?? '15'),
+        'page' => $overrides['page'] ?? ($_GET['page'] ?? 1),
+    ];
+    $q = [];
+    if ($params['name_search'] !== '') {
+        $q['name_search'] = $params['name_search'];
+    }
+    if ($params['cat_filter'] !== '' && $params['cat_filter'] !== 'all') {
+        $q['cat_filter'] = $params['cat_filter'];
+    }
+    if ($params['stock_filter'] !== '' && $params['stock_filter'] !== 'all') {
+        $q['stock_filter'] = $params['stock_filter'];
+    }
+    if ($params['per_page'] !== '' && $params['per_page'] !== '15') {
+        $q['per_page'] = $params['per_page'];
+    }
+    if ((int) $params['page'] > 1) {
+        $q['page'] = (int) $params['page'];
+    }
+    $qs = http_build_query($q);
+    return 'products.php' . ($qs !== '' ? '?' . $qs : '');
+}
 
 require_once '../includes/header.php'; 
 ?>
@@ -202,6 +304,15 @@ body {
     background: var(--primary-soft);
     color: white;
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+a.filter-btn {
+    color: inherit;
+    display: inline-block;
+}
+
+a.filter-btn:hover {
+    color: var(--primary-soft);
 }
 
 /* Table Enhancements */
@@ -294,32 +405,67 @@ body {
     </div>
 
     <?php if(isset($_SESSION['msg'])): ?>
+        <?php $productsStockBroadcast = (($_SESSION['msg_type'] ?? '') === 'success'); ?>
         <div class="alert alert-<?= $_SESSION['msg_type'] ?> border-0 shadow-sm rounded-4 fade show d-flex align-items-center mb-4">
             <i class="bi bi-info-circle-fill me-3 fs-4"></i>
             <div class="flex-grow-1"><?= $_SESSION['msg'] ?></div>
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
+        <?php if (!empty($productsStockBroadcast)): ?>
+        <script>
+        try {
+            var _bc = new BroadcastChannel('erp_product_stock');
+            _bc.postMessage({ type: 'stock_updated' });
+            _bc.close();
+        } catch (e) {}
+        </script>
+        <?php endif; ?>
         <?php unset($_SESSION['msg']); unset($_SESSION['msg_type']); ?>
     <?php endif; ?>
 
-    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
-        <div class="d-flex flex-wrap align-items-center gap-3">
-            <div>
-                <label class="form-label small text-muted mb-1 d-block">تصفية حسب الفئة</label>
-                <select id="categoryFilter" class="form-select rounded-3 border shadow-sm" style="min-width: 200px;">
-                    <option value="all">كل الفئات</option>
-                    <?php foreach ($categories as $c): ?>
-                        <option value="<?= (int)$c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+    <form method="get" class="mb-4" action="products.php" id="productsFilterForm">
+        <div class="d-flex justify-content-between align-items-end flex-wrap gap-3">
+            <div class="d-flex flex-wrap align-items-end gap-3 flex-grow-1">
+                <div style="min-width: 200px;">
+                    <label class="form-label small text-muted mb-1 d-block">بحث بالاسم</label>
+                    <input type="text" name="name_search" class="form-control rounded-3 border shadow-sm" placeholder="اسم المنتج..." value="<?= htmlspecialchars($nameSearch) ?>">
+                </div>
+                <div>
+                    <label class="form-label small text-muted mb-1 d-block">الفئة</label>
+                    <select name="cat_filter" class="form-select rounded-3 border shadow-sm" style="min-width: 200px;" onchange="this.form.page.value=1;this.form.submit()">
+                        <option value="all"<?= ($catFilter === 'all' || $catFilter === '') ? ' selected' : '' ?>>كل الفئات</option>
+                        <?php foreach ($categories as $c): ?>
+                            <option value="<?= (int)$c['id'] ?>"<?= ((string)$catFilter === (string)$c['id']) ? ' selected' : '' ?>><?= htmlspecialchars($c['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small text-muted mb-1 d-block">عدد الصفوف</label>
+                    <select name="per_page" class="form-select rounded-3 border shadow-sm" style="min-width: 130px;" onchange="this.form.page.value=1;this.form.submit()">
+                        <option value="15"<?= ($perPageRaw === '15') ? ' selected' : '' ?>>15</option>
+                        <option value="20"<?= ($perPageRaw === '20') ? ' selected' : '' ?>>20</option>
+                        <option value="30"<?= ($perPageRaw === '30') ? ' selected' : '' ?>>30</option>
+                        <option value="50"<?= ($perPageRaw === '50') ? ' selected' : '' ?>>50</option>
+                        <option value="all"<?= $perPageAll ? ' selected' : '' ?>>الكل</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small text-muted mb-1 d-block d-md-block">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary rounded-3 px-4" onclick="this.form.page.value='1';"><i class="bi bi-search me-1"></i> بحث</button>
+                </div>
             </div>
-        <div class="filter-group shadow-sm">
-            <button class="filter-btn active" onclick="filterProducts('all', this)">كل المنتجات</button>
-            <button class="filter-btn" onclick="filterProducts('available', this)">المتاح</button>
-            <button class="filter-btn" onclick="filterProducts('lowstock', this)">مخزون حرج</button>
-            <button class="filter-btn" onclick="filterProducts('outofstock', this)">المنتهية</button>
         </div>
-        </div>
+        <input type="hidden" name="page" value="<?= (int)$page ?>">
+        <?php if ($stockFilter !== 'all' && $stockFilter !== ''): ?>
+            <input type="hidden" name="stock_filter" value="<?= htmlspecialchars($stockFilter) ?>">
+        <?php endif; ?>
+    </form>
+
+    <div class="filter-group shadow-sm mb-4">
+        <a href="<?= htmlspecialchars(products_list_url(['stock_filter' => 'all', 'page' => 1])) ?>" class="filter-btn text-decoration-none<?= ($stockFilter === 'all' || $stockFilter === '') ? ' active' : '' ?>">كل المنتجات</a>
+        <a href="<?= htmlspecialchars(products_list_url(['stock_filter' => 'available', 'page' => 1])) ?>" class="filter-btn text-decoration-none<?= $stockFilter === 'available' ? ' active' : '' ?>">المتاح</a>
+        <a href="<?= htmlspecialchars(products_list_url(['stock_filter' => 'lowstock', 'page' => 1])) ?>" class="filter-btn text-decoration-none<?= $stockFilter === 'lowstock' ? ' active' : '' ?>">مخزون حرج</a>
+        <a href="<?= htmlspecialchars(products_list_url(['stock_filter' => 'outofstock', 'page' => 1])) ?>" class="filter-btn text-decoration-none<?= $stockFilter === 'outofstock' ? ' active' : '' ?>">المنتهية</a>
     </div>
 
     <div class="modern-card">
@@ -388,6 +534,35 @@ body {
             </table>
         </div>
     </div>
+
+    <?php if (!$perPageAll && $totalPages > 1): ?>
+    <nav class="mt-4" aria-label="ترقيم المنتجات">
+        <ul class="pagination justify-content-center flex-wrap gap-1">
+            <li class="page-item<?= $page <= 1 ? ' disabled' : '' ?>">
+                <a class="page-link rounded-3" href="<?= $page <= 1 ? '#' : htmlspecialchars(products_list_url(['page' => $page - 1])) ?>">&lt;</a>
+            </li>
+            <?php
+            $range = 2;
+            for ($i = 1; $i <= $totalPages; $i++) {
+                if ($i === 1 || $i === $totalPages || ($i >= $page - $range && $i <= $page + $range)) {
+                    ?>
+            <li class="page-item<?= $i === $page ? ' active' : '' ?>">
+                <a class="page-link rounded-3" href="<?= htmlspecialchars(products_list_url(['page' => $i])) ?>"><?= $i ?></a>
+            </li>
+                    <?php
+                } elseif ($i === $page - $range - 1 || $i === $page + $range + 1) {
+                    ?>
+            <li class="page-item disabled"><span class="page-link rounded-3">…</span></li>
+                    <?php
+                }
+            }
+            ?>
+            <li class="page-item<?= $page >= $totalPages ? ' disabled' : '' ?>">
+                <a class="page-link rounded-3" href="<?= $page >= $totalPages ? '#' : htmlspecialchars(products_list_url(['page' => $page + 1])) ?>">&gt;</a>
+            </li>
+        </ul>
+    </nav>
+    <?php endif; ?>
 </div>
 
 <div class="modal fade" id="productModal" tabindex="-1">
@@ -451,8 +626,6 @@ body {
 </div>
 
 <script>
-let currentStockFilter = 'all';
-
 function fillProductModal(data) {
     document.getElementById('modalTitle').innerText = 'تعديل البيانات: ' + data.name;
     document.getElementById('submitBtn').name = 'edit_product';
@@ -482,75 +655,6 @@ document.querySelector('[data-bs-target="#productModal"]').addEventListener('cli
         document.querySelector('#productModal form').reset();
     }
 });
-
-function renderProductRows(rows) {
-    const tb = document.getElementById('productsTableBody');
-    if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">لا توجد منتجات في هذه الفئة</td></tr>';
-        return;
-    }
-    tb.innerHTML = '';
-    rows.forEach(p => {
-        const tr = document.createElement('tr');
-        tr.className = 'product-row';
-        tr.dataset.stock = p.stock_quantity;
-        tr.dataset.categoryId = p.category_id || '';
-        const stock = parseInt(p.stock_quantity, 10) || 0;
-        const badgeClass = stock === 0 ? 'bg-danger' : (stock <= 5 ? 'bg-warning' : 'bg-success');
-        tr.innerHTML = `
-            <td class="ps-4"><code class="small text-muted bg-light px-2 py-1 rounded"></code></td>
-            <td><div class="fw-bold text-main"></div></td>
-            <td><span class="badge rounded-pill bg-light text-muted border px-3"></span></td>
-            <td><div class="small text-muted cost-line"></div><div class="fw-bold text-primary sell-line"></div></td>
-            <td class="text-center"><span class="badge ${badgeClass} shadow-sm stock-pill"></span></td>
-            <td class="text-center pe-4"><div class="btn-group shadow-sm rounded-3">
-                <a href="print_product_label.php?id=${encodeURIComponent(String(p.id))}" target="_blank" rel="noopener" class="btn btn-white border" title="باركود وطباعة"><i class="bi bi-upc-scan text-info"></i></a>
-                <button type="button" class="btn btn-white border edit-btn" data-bs-toggle="modal" data-bs-target="#productModal"><i class="bi bi-pencil-square text-warning"></i></button>
-                <a href="#" class="btn btn-white border del-a"><i class="bi bi-trash3 text-danger"></i></a>
-            </div></td>`;
-        tr.querySelector('code').textContent = p.barcode || '';
-        tr.querySelector('.text-main').textContent = p.name || '';
-        tr.querySelector('.badge.rounded-pill').textContent = p.category_name || '';
-        tr.querySelector('.cost-line').textContent = 'شراء: ' + Number(p.cost_price).toLocaleString('en-US', { minimumFractionDigits: 2 });
-        tr.querySelector('.sell-line').textContent = 'بيع: ' + Number(p.selling_price).toLocaleString('en-US', { minimumFractionDigits: 2 });
-        const pill = tr.querySelector('.stock-pill');
-        pill.style.cssText = 'width: 45px; height: 45px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; font-size: 1rem;';
-        pill.textContent = String(stock);
-        const del = tr.querySelector('.del-a');
-        del.href = '?delete=' + encodeURIComponent(String(p.id));
-        del.setAttribute('onclick', "return confirm('نقل المنتج لسلة المحذوفات؟')");
-        tr.querySelector('.edit-btn').dataset.json = JSON.stringify(p);
-        tb.appendChild(tr);
-    });
-}
-
-document.getElementById('categoryFilter').addEventListener('change', function() {
-    const v = this.value;
-    const url = 'products.php?action=products_by_category&category_id=' + encodeURIComponent(v);
-    fetch(url).then(r => r.json()).then(data => {
-        renderProductRows(Array.isArray(data) ? data : []);
-        applyStockFilter();
-    }).catch(() => {});
-});
-
-function applyStockFilter() {
-    const type = currentStockFilter;
-    document.querySelectorAll('.product-row').forEach(row => {
-        const stock = parseInt(row.dataset.stock, 10) || 0;
-        row.style.display = 'none';
-        if (type === 'all') row.style.display = '';
-        if (type === 'available' && stock > 0) row.style.display = '';
-        if (type === 'lowstock' && stock > 0 && stock <= 5) row.style.display = '';
-        if (type === 'outofstock' && stock === 0) row.style.display = '';
-    });
-}
-
-function filterProducts(type, btn) {
-    currentStockFilter = type;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    applyStockFilter();
-}
 
 // Dark Mode Toggle System 2026
 function toggleTheme() {

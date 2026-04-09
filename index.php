@@ -34,40 +34,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>دخول النظام | ERP V2</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Ark4n</title>
+    <!-- Fonts & Bootstrap RTL -->
+    <link name="aa" rel="icon" type="image/png" href="Picture4.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        /* ===== ERP LOGIN PAGE - UI ENHANCEMENTS ===== */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-
-        :root {
-            --primary: #2563eb;
-            --primary-light: #3b82f6;
-            --primary-dark: #1d4ed8;
-            --gray-50: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --gray-700: #334155;
-            --gray-800: #1e293b;
-            --gray-900: #0f172a;
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.03);
-            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.03);
-            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.03);
-        }
-
+        .aa{
+            width: 100%;       /* تخلي الصورة تاخد عرض الدائرة كله */
+            height: 100%;      /* تخلي الصورة تاخد طول الدائرة كله */
+            object-fit: cover; /* دي أهم خاصية: بتخلي الصورة تملا المساحة وتعمل قص (Crop) بسيط للأطراف بدل ما تتمط */
+            border-radius: 50%; /* عشان الصورة نفسها تتقص بشكل دائري */
+            }
+        
         body {
             font-family: 'Cairo', sans-serif;
-            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            background: linear-gradient(135deg, #0a0a1a 0%, #02040c 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -76,162 +64,259 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             padding: 1rem;
         }
 
-        .login-container {
+        /* حاوية المحتوى */
+        .login-wrapper {
             width: 100%;
-            max-width: 440px;
-            margin: 0 auto;
+            max-width: 500px;
         }
 
-        .login-card {
-            background: white;
-            border-radius: 24px;
-            padding: 2.5rem 2rem;
-            box-shadow: var(--shadow-lg);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            backdrop-filter: blur(10px);
-            transition: transform 0.2s ease;
+        @keyframes fadeSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        .login-card:hover {
-            transform: translateY(-2px);
+        /* بطاقة تسجيل الدخول */
+        .ark4n-card {
+            background: rgba(8, 16, 30, 0.9);
+            backdrop-filter: blur(14px);
+            border-radius: 56px;
+            padding: 2.8rem 2.2rem;
+            border: 1px solid rgba(100, 80, 255, 0.4);
+            box-shadow: 0 30px 50px rgba(0, 0, 0, 0.5), 0 0 30px rgba(120, 80, 255, 0.15);
+            transition: transform 0.3s ease, border-color 0.3s;
+            width: 100%;
+            animation: fadeSlideUp 0.6s ease-out;
         }
 
-        .login-header {
+        .ark4n-card:hover {
+            border-color: rgba(160, 100, 255, 0.6);
+            box-shadow: 0 35px 60px rgba(0, 0, 0, 0.6), 0 0 35px rgba(140, 90, 255, 0.2);
+        }
+
+        /* رأس الصفحة */
+        .logo-area {
             text-align: center;
             margin-bottom: 2rem;
         }
 
-        .login-header h3 {
-            font-size: 1.875rem;
-            font-weight: 700;
-            color: var(--gray-900);
-            margin-bottom: 0.5rem;
-        }
-
-        .login-header p {
-            color: var(--gray-500);
-            font-size: 0.95rem;
-        }
-
-        .form-label {
-            font-weight: 600;
-            color: var(--gray-700);
-            margin-bottom: 0.5rem;
-            font-size: 0.95rem;
-        }
-
-        .form-control {
-            border: 2px solid var(--gray-200);
-            border-radius: 12px;
-            padding: 0.75rem 1rem;
-            font-size: 1rem;
-            transition: all 0.2s ease;
-            background-color: var(--gray-50);
-        }
-
-        .form-control:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
-            outline: none;
-            background-color: white;
-        }
-
-        .form-control::placeholder {
-            color: var(--gray-400);
-            font-size: 0.95rem;
-        }
-
-        .btn-login {
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 12px;
-            padding: 0.875rem;
-            font-weight: 600;
-            font-size: 1rem;
-            width: 100%;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            margin-top: 1.5rem;
+        .icon-glow {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
+            background: linear-gradient(145deg, #0f0f2a, #03031a);
+            width: 90px;
+            height: 90px;
+            border-radius: 35px;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+            border: 1px solid rgba(130, 80, 255, 0.5);
         }
 
-        .btn-login:hover {
-            background: var(--primary-dark);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+        .ark4n-icon {
+            font-size: 3.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #c084fc, #5e9eff, #b77cff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 15px rgba(140, 80, 255, 0.5);
+            letter-spacing: 2px;
         }
 
-        .btn-login:active {
-            transform: translateY(0);
+        .ark4n-name {
+            font-size: 3.3rem;
+            font-weight: 800;
+            font-family: 'Cairo', 'Segoe UI', system-ui;
+            background: linear-gradient(125deg, #ffffff, #b77cff, #5e9eff, #c084fc);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 20px rgba(130, 80, 255, 0.4);
+            letter-spacing: -0.5px;
+            margin-bottom: 0.35rem;
+            position: relative;
+            display: inline-block;
         }
 
-        .alert {
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            border: none;
+        .ark4n-name::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 10%;
+            width: 80%;
+            height: 2.5px;
+            background: linear-gradient(90deg, transparent, #b77cff, #5e9eff, #c084fc, transparent);
+            border-radius: 4px;
+        }
+
+        .sub-line {
+            color: #c9b6ff;
+            font-size: 0.85rem;
+            letter-spacing: 1.2px;
+            opacity: 0.9;
+            margin-top: 16px;
             font-weight: 500;
         }
 
-        .alert-danger {
-            background-color: #fef2f2;
-            color: #991b1b;
-            border: 1px solid #fee2e2;
+        /* الحقول */
+        .form-floating-custom {
+            margin-bottom: 1.6rem;
         }
 
-        .input-group {
-            position: relative;
-            margin-bottom: 1rem;
+        .input-dark {
+            width: 100%;
+            background: rgba(3, 10, 25, 0.8);
+            border: 1px solid rgba(120, 90, 220, 0.5);
+            border-radius: 40px;
+            padding: 0.9rem 1.5rem;
+            font-size: 1rem;
+            color: #f0f0ff;
+            font-family: 'Cairo', monospace;
+            transition: all 0.25s ease;
+            outline: none;
         }
 
-        @media (max-width: 480px) {
-            .login-card {
-                padding: 2rem 1.5rem;
+        .input-dark:focus {
+            border-color: #b77cff;
+            box-shadow: 0 0 14px rgba(150, 80, 255, 0.3);
+            background: rgba(10, 20, 40, 0.95);
+            color: white;
+        }
+
+        .input-dark::placeholder {
+            color: #9a8cbb;
+            font-weight: 400;
+        }
+
+        .form-label-custom {
+            display: block;
+            margin-bottom: 0.5rem;
+            margin-right: 0.75rem;
+            color: #d9ccff;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.4px;
+        }
+
+        /* زر الدخول */
+        .btn-cyber {
+            background: linear-gradient(105deg, #6d4aff, #3b82f6);
+            border: none;
+            border-radius: 44px;
+            padding: 0.95rem 1.5rem;
+            font-weight: 700;
+            font-size: 1.1rem;
+            width: 100%;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            transition: 0.25s;
+            margin-top: 1.2rem;
+            box-shadow: 0 6px 18px rgba(100, 70, 255, 0.3);
+            cursor: pointer;
+        }
+
+        .btn-cyber:hover {
+            transform: translateY(-2px);
+            background: linear-gradient(105deg, #7d5cff, #4f8eff);
+            box-shadow: 0 10px 28px rgba(110, 80, 255, 0.5);
+        }
+
+        .alert-neon {
+            background: rgba(200, 70, 120, 0.15);
+            backdrop-filter: blur(8px);
+            border-right: 4px solid #ff66aa;
+            border-radius: 24px;
+            color: #ffc0e0;
+            padding: 0.8rem 1rem;
+            margin-bottom: 1.5rem;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        /* استجابة للهواتف */
+        @media (max-width: 550px) {
+            .ark4n-card {
+                padding: 1.8rem 1.3rem;
+                border-radius: 40px;
             }
-            
-            .login-header h3 {
-                font-size: 1.5rem;
+            .ark4n-name {
+                font-size: 2.2rem;
+            }
+            .icon-glow {
+                width: 72px;
+                height: 72px;
+            }
+            .ark4n-icon {
+                font-size: 3rem;
+            }
+        }
+
+        @media (max-width: 380px) {
+            .ark4n-card {
+                padding: 1.5rem 1.2rem;
+            }
+            .ark4n-name {
+                font-size: 1.9rem;
+            }
+            .btn-cyber {
+                padding: 0.75rem 1rem;
+                font-size: 0.95rem;
             }
         }
     </style>
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-card">
-            <div class="login-header">
-                <h3>تسجيل الدخول</h3>
-                <p>نظام ERP المتكامل V2</p>
+
+    <div class="login-wrapper">
+        <div class="ark4n-card">
+            <div class="logo-area">
+                <div class="icon-glow">
+                    <div class="ark4n-icon">⌘</div>
+                </div>
+                <div>
+                    <span class="ark4n-name">Ark4n</span>
+                </div>
             </div>
-            
+
+            <!-- عرض رسالة الخطأ من PHP -->
             <?php if($error): ?>
-                <div class="alert alert-danger"><?= $error ?></div>
+                <div class="alert-neon">⚠️ <?= htmlspecialchars($error) ?></div>
             <?php endif; ?>
-            
-            <form method="POST">
-                <div class="mb-4">
-                    <label class="form-label">اسم المستخدم</label>
-                    <input type="text" name="username" class="form-control" placeholder="أدخل اسم المستخدم" required>
+
+            <!-- نموذج تسجيل الدخول -->
+            <form method="POST" action="">
+                <div class="form-floating-custom">
+                    <label class="form-label-custom"><i class="fas fa-user-astronaut"></i> اسم المستخدم</label>
+                    <input type="text" name="username" class="input-dark" placeholder="@" autocomplete="username" required>
                 </div>
-                
-                <div class="mb-4">
-                    <label class="form-label">كلمة المرور</label>
-                    <input type="password" name="password" class="form-control" placeholder="أدخل كلمة المرور" required>
+                <div class="form-floating-custom">
+                    <label class="form-label-custom"><i class="fas fa-key"></i> كلمة المرور</label>
+                    <input type="password" name="password" class="input-dark" placeholder="••••••••" autocomplete="current-password" required>
                 </div>
-                
-                <button type="submit" class="btn-login">
-                    <span>دخول</span>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <button type="submit" class="btn-cyber">
+                    <span>دخول إلى النظام</span>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
                         <polyline points="10 17 15 12 10 7"/>
                         <line x1="15" y1="12" x2="3" y2="12"/>
                     </svg>
                 </button>
             </form>
+            <div class="sub-line" style="text-align: center; margin-top: 1.5rem; font-size: 0.7rem;">
+                Ark4n | اركان للحلول البرمجيه❤️
+        </div>
         </div>
     </div>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </body>
 </html>

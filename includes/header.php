@@ -97,6 +97,83 @@ check_login();
             position: sticky;
             top: 0;
             z-index: 10;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: var(--space-3);
+        }
+
+        .sidebar-header-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sidebar-inner-toggle {
+            flex-shrink: 0;
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
+            border: 1px solid var(--gray-200);
+            background: var(--gray-50);
+            color: var(--gray-600);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .sidebar-inner-toggle:hover {
+            background: var(--gray-100);
+            color: var(--primary);
+            border-color: var(--gray-300);
+        }
+
+        @media (min-width: 769px) {
+            .sidebar-inner-toggle {
+                display: inline-flex;
+            }
+        }
+
+        .btn-sidebar-toggle {
+            flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            border: 1px solid var(--gray-200);
+            background: var(--gray-50);
+            color: var(--gray-700);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .btn-sidebar-toggle:hover {
+            background: var(--gray-100);
+            color: var(--primary);
+            border-color: var(--primary-light);
+        }
+
+        .btn-sidebar-toggle i {
+            font-size: 1.35rem;
+        }
+
+        @media (min-width: 769px) {
+            body.sidebar-collapsed .sidebar {
+                transform: translateX(100%);
+                pointer-events: none;
+                box-shadow: none;
+            }
+
+            body.sidebar-collapsed .main-content {
+                margin-right: 0 !important;
+            }
+
+            body.sidebar-collapsed .sidebar-inner-toggle {
+                display: none;
+            }
         }
 
         .sidebar-header h4 {
@@ -107,6 +184,7 @@ check_login();
         }
 
         .sidebar-header small {
+            display: block;
             color: var(--gray-500);
             font-size: 0.75rem;
             letter-spacing: 0.5px;
@@ -518,7 +596,8 @@ check_login();
         @media print {
             .sidebar,
             .navbar-top,
-            .btn {
+            .btn,
+            .btn-sidebar-toggle {
                 display: none !important;
             }
             
@@ -545,7 +624,12 @@ check_login();
 
     <main class="main-content">
         <nav class="navbar-top">
-            <a href="dashboard.php" class="navbar-brand">ERP SYSTEM V2</a>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn-sidebar-toggle" id="sidebarToggle" data-erp-sidebar-toggle title="إظهار أو إخفاء القائمة" aria-expanded="true" aria-controls="erp-sidebar">
+                    <i class="bi bi-layout-sidebar-inset-reverse" aria-hidden="true"></i>
+                </button>
+                <a href="dashboard.php" class="navbar-brand mb-0">ERP SYSTEM V2</a>
+            </div>
             <div class="user-info">
                 <span class="user-name">مرحباً: <?= htmlspecialchars($_SESSION['username']) ?></span>
                 <span class="user-badge"><?= htmlspecialchars($_SESSION['role_name']) ?></span>

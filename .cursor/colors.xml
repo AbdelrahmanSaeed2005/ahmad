@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+  File Path: .cursor/colors.xml
+  Description: ERP System Color Scheme - Light & Dark Mode
+  Usage: Use this file to define global color tokens for the entire ERP system
+-->
+
+<color-system>
+  <!-- ============================================ -->
+  <!-- LIGHT MODE COLORS (Professional ERP Theme)   -->
+  <!-- ============================================ -->
+  
+  <theme name="light">
+    <!-- Primary Colors (Indigo/Blue - Professional ERP) -->
+    <color name="primary" value="#4f46e5" />
+    <color name="primary-light" value="#6366f1" />
+    <color name="primary-dark" value="#4338ca" />
+    <color name="primary-soft" value="#e0e7ff" />
+    <color name="primary-glow" value="rgba(79, 70, 229, 0.2)" />
+    
+    <!-- Secondary Colors -->
+    <color name="secondary" value="#64748b" />
+    <color name="secondary-light" value="#94a3b8" />
+    <color name="secondary-dark" value="#475569" />
+    
+    <!-- Semantic Colors -->
+    <color name="success" value="#10b981" />
+    <color name="success-light" value="#d1fae5" />
+    <color name="success-dark" value="#059669" />
+    <color name="success-glow" value="rgba(16, 185, 129, 0.2)" />
+    
+    <color name="danger" value="#ef4444" />
+    <color name="danger-light" value="#fee2e2" />
+    <color name="danger-dark" value="#dc2626" />
+    <color name="danger-glow" value="rgba(239, 68, 68, 0.2)" />
+    
+    <color name="warning" value="#f59e0b" />
+    <color name="warning-light" value="#fed7aa" />
+    <color name="warning-dark" value="#d97706" />
+    
+    <color name="info" value="#3b82f6" />
+    <color name="info-light" value="#dbeafe" />
+    <color name="info-dark" value="#2563eb" />
+    
+    <!-- Background Colors -->
+    <color name="bg-body" value="#f8fafc" />
+    <color name="bg-card" value="#ffffff" />
+    <color name="bg-sidebar" value="#ffffff" />
+    <color name="bg-header" value="#ffffff" />
+    <color name="bg-hover" value="#f1f5f9" />
+    <color name="bg-input" value="#ffffff" />
+    <color name="bg-modal" value="#ffffff" />
+    <color name="bg-table-header" value="#f8fafc" />
+    
+    <!-- Text Colors -->
+    <color name="text-primary" value="#0f172a" />
+    <color name="text-secondary" value="#334155" />
+    <color name="text-muted" value="#64748b" />
+    <color name="text-disabled" value="#94a3b8" />
+    <color name="text-inverse" value="#ffffff" />
+    <color name="text-link" value="#4f46e5" />
+    
+    <!-- Border Colors -->
+    <color name="border-light" value="#e2e8f0" />
+    <color name="border-medium" value="#cbd5e1" />
+    <color name="border-focus" value="#4f46e5" />
+    
+    <!-- Shadow Colors -->
+    <color name="shadow-xs" value="rgba(0, 0, 0, 0.02)" />
+    <color name="shadow-sm" value="rgba(0, 0, 0, 0.03)" />
+    <color name="shadow-md" value="rgba(0, 0, 0, 0.04)" />
+    <color name="shadow-lg" value="rgba(0, 0, 0, 0.05)" />
+    <color name="shadow-xl" value="rgba(0, 0, 0, 0.06)" />
+    
+    <!-- Chart Colors -->
+    <color name="chart-primary" value="#4f46e5" />
+    <color name="chart-secondary" value="#10b981" />
+    <color name="chart-tertiary" value="#f59e0b" />
+    <color name="chart-quaternary" value="#ef4444" />
+    <color name="chart-quinary" value="#8b5cf6" />
+    
+    <!-- Status Colors -->
+    <color name="status-shipped" value="#10b981" />
+    <color name="status-pending" value="#f59e0b" />
+    <color name="status-canceled" value="#ef4444" />
+    <color name="status-completed" value="#3b82f6" />
+    
+    <!-- Rating Colors -->
+    <color name="rating-star" value="#fbbf24" />
+    <color name="rating-star-empty" value="#e2e8f0" />
+    
+    <!-- WhatsApp Color -->
+    <color name="whatsapp" value="#25D366" />
+    <color name="whatsapp-dark" value="#128C7E" />
+    <color name="whatsapp-light" value="#dcf8c6" />
+  </theme>
+  
+  <!-- ============================================ -->
+  <!-- DARK MODE COLORS (Deep Charcoal - Not pure black) -->
+  <!-- ============================================ -->
+  
+  <theme name="dark">
+    <!-- Primary Colors -->
+    <color name="primary" value="#6366f1" />
+    <color name="primary-light" value="#818cf8" />
+    <color name="primary-dark" value="#4f46e5" />
+    <color name="primary-soft" value="#1e293b" />
+    <color name="primary-glow" value="rgba(99, 102, 241, 0.2)" />
+    
+    <!-- Secondary Colors -->
+    <color name="secondary" value="#94a3b8" />
+    <color name="secondary-light" value="#cbd5e1" />
+    <color name="secondary-dark" value="#64748b" />
+    
+    <!-- Semantic Colors -->
+    <color name="success" value="#34d399" />
+    <color name="success-light" value="#064e3b" />
+    <color name="success-dark" value="#059669" />
+    <color name="success-glow" value="rgba(52, 211, 153, 0.2)" />
+    
+    <color name="danger" value="#f87171" />
+    <color name="danger-light" value="#7f1d1d" />
+    <color name="danger-dark" value="#dc2626" />
+    <color name="danger-glow" value="rgba(248, 113, 113, 0.2)" />
+    
+    <color name="warning" value="#fbbf24" />
+    <color name="warning-light" value="#78350f" />
+    <color name="warning-dark" value="#d97706" />
+    
+    <color name="info" value="#60a5fa" />
+    <color name="info-light" value="#1e3a8a" />
+    <color name="info-dark" value="#2563eb" />
+    
+    <!-- Background Colors (Deep Charcoal) -->
+    <color name="bg-body" value="#0f172a" />
+    <color name="bg-card" value="#1e293b" />
+    <color name="bg-sidebar" value="#1e293b" />
+    <color name="bg-header" value="#1e293b" />
+    <color name="bg-hover" value="#2d3a4f" />
+    <color name="bg-input" value="#1e293b" />
+    <color name="bg-modal" value="#1e293b" />
+    <color name="bg-table-header" value="#1e293b" />
+    
+    <!-- Text Colors (High Contrast) -->
+    <color name="text-primary" value="#f1f5f9" />
+    <color name="text-secondary" value="#cbd5e1" />
+    <color name="text-muted" value="#94a3b8" />
+    <color name="text-disabled" value="#6b7280" />
+    <color name="text-inverse" value="#0f172a" />
+    <color name="text-link" value="#818cf8" />
+    
+    <!-- Border Colors -->
+    <color name="border-light" value="#334155" />
+    <color name="border-medium" value="#475569" />
+    <color name="border-focus" value="#6366f1" />
+    
+    <!-- Shadow Colors (Dark Mode) -->
+    <color name="shadow-xs" value="rgba(0, 0, 0, 0.3)" />
+    <color name="shadow-sm" value="rgba(0, 0, 0, 0.4)" />
+    <color name="shadow-md" value="rgba(0, 0, 0, 0.5)" />
+    <color name="shadow-lg" value="rgba(0, 0, 0, 0.6)" />
+    <color name="shadow-xl" value="rgba(0, 0, 0, 0.7)" />
+    
+    <!-- Chart Colors -->
+    <color name="chart-primary" value="#818cf8" />
+    <color name="chart-secondary" value="#34d399" />
+    <color name="chart-tertiary" value="#fbbf24" />
+    <color name="chart-quaternary" value="#f87171" />
+    <color name="chart-quinary" value="#a78bfa" />
+    
+    <!-- Status Colors -->
+    <color name="status-shipped" value="#34d399" />
+    <color name="status-pending" value="#fbbf24" />
+    <color name="status-canceled" value="#f87171" />
+    <color name="status-completed" value="#60a5fa" />
+    
+    <!-- Rating Colors -->
+    <color name="rating-star" value="#fbbf24" />
+    <color name="rating-star-empty" value="#475569" />
+    
+    <!-- WhatsApp Color -->
+    <color name="whatsapp" value="#25D366" />
+    <color name="whatsapp-dark" value="#128C7E" />
+    <color name="whatsapp-light" value="#1a3a2a" />
+  </theme>
+  
+  <!-- ============================================ -->
+  <!-- CSS VARIABLES OUTPUT (For Direct Copy)       -->
+  <!-- ============================================ -->
+  
+  <css-variables>
+    <example>
+      <![CDATA[
+      /* Light Mode CSS Variables */
+      :root {
+          --primary: #4f46e5;
+          --primary-light: #6366f1;
+          --primary-dark: #4338ca;
+          --primary-soft: #e0e7ff;
+          --success: #10b981;
+          --danger: #ef4444;
+          --warning: #f59e0b;
+          --info: #3b82f6;
+          --bg-body: #f8fafc;
+          --bg-card: #ffffff;
+          --text-primary: #0f172a;
+          --text-secondary: #334155;
+          --text-muted: #64748b;
+          --border-light: #e2e8f0;
+          --border-medium: #cbd5e1;
+      }
+      
+      /* Dark Mode CSS Variables */
+      [data-theme="dark"] {
+          --primary: #6366f1;
+          --primary-light: #818cf8;
+          --primary-dark: #4f46e5;
+          --primary-soft: #1e293b;
+          --success: #34d399;
+          --danger: #f87171;
+          --warning: #fbbf24;
+          --info: #60a5fa;
+          --bg-body: #0f172a;
+          --bg-card: #1e293b;
+          --text-primary: #f1f5f9;
+          --text-secondary: #cbd5e1;
+          --text-muted: #94a3b8;
+          --border-light: #334155;
+          --border-medium: #475569;
+      }
+      ]]>
+    </example>
+  </css-variables>
+</color-system>

@@ -11,7 +11,7 @@ if (isset($_GET['action'])) {
         if (strlen($q) < 1) { echo json_encode([]); exit; }
         $stmt = $pdo->prepare("SELECT id, name, barcode, selling_price, min_selling_price, stock_quantity 
                                FROM products WHERE (name LIKE ? OR barcode LIKE ?) 
-                               AND deleted_at IS NULL AND stock_quantity > 0 LIMIT 10");
+                               AND deleted_at IS NULL LIMIT 10");
         $searchQuery = "%$q%";
         $stmt->execute([$searchQuery, $searchQuery]);
         echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
@@ -43,6 +43,27 @@ if (isset($_GET['action'])) {
             exit;
         }
         echo json_encode(['ok' => true, 'product' => $row]);
+        exit;
+    }
+
+    if ($_GET['action'] === 'stock_for_cart') {
+        $raw = $_GET['ids'] ?? '';
+        $ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $raw)))));
+        if (empty($ids)) {
+            echo json_encode(new stdClass());
+            exit;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT id, stock_quantity, selling_price, min_selling_price, cost_price 
+             FROM products WHERE deleted_at IS NULL AND id IN ($placeholders)"
+        );
+        $stmt->execute($ids);
+        $out = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $out[(int) $row['id']] = $row;
+        }
+        echo json_encode($out, JSON_UNESCAPED_UNICODE);
         exit;
     }
     
@@ -1127,6 +1148,70 @@ function focusProductSearch() {
     }
 }
 
+function focusLastCartQty() {
+    setTimeout(function () {
+        const inputs = document.querySelectorAll('#cartBody .qty-input');
+        if (inputs.length) {
+            const el = inputs[inputs.length - 1];
+            el.focus();
+            el.select();
+        } else {
+            focusProductSearch();
+        }
+    }, 0);
+}
+
+function refreshCartStockFromServer() {
+    if (!cart.length) return;
+    const ids = cart.map(function (i) { return i.id; }).join(',');
+    fetch('pos.php?action=stock_for_cart&ids=' + encodeURIComponent(ids))
+        .then(function (r) { return r.json(); })
+        .then(function (map) {
+            if (!map || typeof map !== 'object') return;
+            let changed = false;
+            for (let i = cart.length - 1; i >= 0; i--) {
+                const item = cart[i];
+                const u = map[item.id];
+                if (!u) continue;
+                const sq = parseInt(u.stock_quantity, 10);
+                if (isNaN(sq)) continue;
+                if (sq <= 0) {
+                    showToast('المنتج «' + item.name + '» خلص من المخزن وأُزيل من السلة', 'warning');
+                    cart.splice(i, 1);
+                    changed = true;
+                    continue;
+                }
+                if (item.qty > sq) {
+                    item.qty = sq;
+                    changed = true;
+                    showToast('تم ضبط كمية «' + item.name + '» إلى ' + sq + ' حسب المخزن', 'info');
+                }
+                item.stock_quantity = sq;
+                if (u.selling_price != null && u.selling_price !== '') {
+                    item.selling_price = parseFloat(u.selling_price);
+                }
+                if (u.min_selling_price != null && u.min_selling_price !== '') {
+                    item.min_selling_price = parseFloat(u.min_selling_price);
+                }
+                if (u.cost_price != null && u.cost_price !== '') {
+                    item.cost_price = parseFloat(u.cost_price);
+                }
+            }
+            if (changed) renderCart();
+        })
+        .catch(function () { /* ignore */ });
+}
+
+let erpStockChannel = null;
+try {
+    if (typeof BroadcastChannel !== 'undefined') {
+        erpStockChannel = new BroadcastChannel('erp_product_stock');
+        erpStockChannel.onmessage = function () {
+            refreshCartStockFromServer();
+        };
+    }
+} catch (e) { /* */ }
+
 function showScanPreview(p) {
     const box = document.getElementById('scanPreview');
     if (!box) return;
@@ -1410,6 +1495,10 @@ document.addEventListener('DOMContentLoaded', () => {
     /* سكانر USB (لوحة مفاتيح): توجيه الأحرف إلى حقل الباركود تلقائياً */
     initUsbBarcodeScannerRouting();
 
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && cart.length) refreshCartStockFromServer();
+    });
+
     const productSearchEl = document.getElementById('productSearch');
     productSearchEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
@@ -1579,13 +1668,14 @@ document.getElementById('productSearch').addEventListener('input', function() {
                 html = '<div class="list-group-item text-muted text-center p-3">لم يتم العثور على نتائج</div>';
             } else {
                 data.forEach(p => {
+                    const out = parseInt(p.stock_quantity, 10) <= 0;
                     html += `
-<button class="list-group-item list-group-item-action d-flex justify-content-between align-items-center p-3 border-0" onclick='addToCart(${JSON.stringify(p)})'>
+<button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center p-3 border-0" onclick='addToCart(${JSON.stringify(p)})'>
                         <div>
-                            <span class="fw-bold d-block text-main">${p.name}</span>
-                            <small class="text-muted">${p.barcode} | متاح: ${p.stock_quantity}</small>
+                            <span class="fw-bold d-block text-main">${escapeHtml(p.name)}</span>
+                            <small class="text-muted">${escapeHtml(String(p.barcode || ''))} | متاح: ${p.stock_quantity}${out ? ' <span class="text-warning fw-bold">(خلصان)</span>' : ''}</small>
                         </div>
-                        <span class="badge bg-primary rounded-pill">${p.selling_price} ج.م</span>
+                        <span class="badge ${out ? 'bg-secondary' : 'bg-primary'} rounded-pill">${p.selling_price} ج.م</span>
                     </button>`;
                 });
             }
@@ -1596,7 +1686,7 @@ document.getElementById('productSearch').addEventListener('input', function() {
 
 function addToCart(product) {
     if (product.stock_quantity <= 0) {
-        showToast('عذراً: المنتج نفذ من المخزن', 'error');
+        showToast('هذا المنتج خلصان من المخزن', 'warning');
         hideScanPreview();
         return;
     }
@@ -1616,7 +1706,7 @@ function addToCart(product) {
     document.getElementById('productSearch').value = '';
     showToast(`${product.name} — ${Number(product.selling_price).toFixed(2)} ج.م · أضيف للسلة`, 'success');
     hideScanPreview();
-    focusProductSearch();
+    focusLastCartQty();
 }
 
 function updatePrice(index, val) {

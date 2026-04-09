@@ -43,20 +43,85 @@
         <?php unset($_SESSION['msg'], $_SESSION['msg_type']); ?>
     <?php endif; ?>
 
-    // Responsive sidebar toggle للهواتف
-    function toggleSidebar() {
-        document.querySelector('.sidebar').classList.toggle('show');
-    }
+    // إظهار/إخفاء الشريط الجانبي (سطح المكتب + جوال)
+    (function () {
+        const sidebar = document.querySelector('.sidebar');
+        const toggles = document.querySelectorAll('[data-erp-sidebar-toggle]');
+        const mainBtn = document.getElementById('sidebarToggle');
+        if (!sidebar || toggles.length === 0) return;
 
-    // إضافة زر القائمة للهواتف
-    if (window.innerWidth <= 768) {
-        const navbar = document.querySelector('.navbar-top');
-        const menuBtn = document.createElement('button');
-        menuBtn.className = 'btn btn-sm btn-secondary';
-        menuBtn.innerHTML = '<i class="bi bi-list"></i>';
-        menuBtn.onclick = toggleSidebar;
-        navbar.insertBefore(menuBtn, navbar.firstChild);
-    }
+        const isMobile = function () {
+            return window.matchMedia('(max-width: 768px)').matches;
+        };
+
+        function updateToggleUi() {
+            const icon = mainBtn && mainBtn.querySelector('i');
+            if (!mainBtn) return;
+            if (isMobile()) {
+                const open = sidebar.classList.contains('show');
+                mainBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+                if (icon) icon.className = open ? 'bi bi-x-lg' : 'bi bi-list';
+            } else {
+                const collapsed = document.body.classList.contains('sidebar-collapsed');
+                mainBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                if (icon) icon.className = collapsed ? 'bi bi-list' : 'bi bi-layout-sidebar-inset-reverse';
+            }
+        }
+
+        function restoreDesktopState() {
+            if (isMobile()) {
+                document.body.classList.remove('sidebar-collapsed');
+                return;
+            }
+            try {
+                if (localStorage.getItem('erp_sidebar_collapsed') === '1') {
+                    document.body.classList.add('sidebar-collapsed');
+                } else {
+                    document.body.classList.remove('sidebar-collapsed');
+                }
+            } catch (e) {
+                document.body.classList.remove('sidebar-collapsed');
+            }
+        }
+
+        function onToggle() {
+            if (isMobile()) {
+                sidebar.classList.toggle('show');
+            } else {
+                document.body.classList.toggle('sidebar-collapsed');
+                try {
+                    localStorage.setItem(
+                        'erp_sidebar_collapsed',
+                        document.body.classList.contains('sidebar-collapsed') ? '1' : '0'
+                    );
+                } catch (e) {}
+            }
+            updateToggleUi();
+        }
+
+        toggles.forEach(function (el) {
+            el.addEventListener('click', onToggle);
+        });
+
+        document.addEventListener('DOMContentLoaded', function () {
+            restoreDesktopState();
+            updateToggleUi();
+        });
+
+        window.addEventListener('resize', function () {
+            sidebar.classList.remove('show');
+            restoreDesktopState();
+            updateToggleUi();
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!isMobile() || !sidebar.classList.contains('show')) return;
+            if (sidebar.contains(e.target)) return;
+            if (e.target.closest('[data-erp-sidebar-toggle]')) return;
+            sidebar.classList.remove('show');
+            updateToggleUi();
+        });
+    })();
 </script>
 </body>
 </html>

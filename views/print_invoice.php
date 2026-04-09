@@ -313,7 +313,7 @@ foreach ($items as $item) {
                     <div class="logo-box">ERP</div>
                     <div class="company-meta">
                         <h1>فاتورة ARKAN </h1>
-                        <p>القاهرة - مصر | 01099319899 </p>
+                        <p>القاهرة - مصر | 01110275747 </p>
                     </div>
                 </div>
                 <div class="invoice-id">#<?= (int)$invoice['id'] ?></div>
@@ -383,8 +383,9 @@ foreach ($items as $item) {
             </div>
 
             <div class="invoice-footer">
-                <div><strong>شكراً لزيارتكم</strong></div>
-                <div>برمجة بواسطة: Arkan | اركان للحلول البرمجية❤️</div>
+                <!-- <div><strong>شكراً لزيارتكم</strong></div> -->
+                <div> Arkan | اركان للحلول البرمجية❤️</div>
+                <div><a href="https://wa.me/201099319899">01099319899</a></div>
             </div>
         </div>
     </div>

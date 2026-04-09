@@ -5,6 +5,66 @@
 require_once '../includes/db_connect.php';
 require_once '../includes/auth.php';
 
+$pdo->exec(
+    "CREATE TABLE IF NOT EXISTS expense_types (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(191) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_expense_type_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+
+if ((int) $pdo->query('SELECT COUNT(*) FROM expense_types')->fetchColumn() === 0) {
+    $seed = ['إيجار', 'كهرباء/مياه', 'مرتبات', 'بضاعة', 'سلف عمال', 'أخرى'];
+    $insSeed = $pdo->prepare('INSERT IGNORE INTO expense_types (name) VALUES (?)');
+    foreach ($seed as $n) {
+        $insSeed->execute([$n]);
+    }
+}
+
+if (isset($_POST['add_expense_type']) && isset($_POST['type_name'])) {
+    $n = trim((string) $_POST['type_name']);
+    if ($n !== '') {
+        try {
+            $pdo->prepare('INSERT INTO expense_types (name) VALUES (?)')->execute([$n]);
+            header('Location: expenses.php?msg=type_added');
+        } catch (Throwable $e) {
+            header('Location: expenses.php?msg=type_dup');
+        }
+    }
+    exit;
+}
+
+if (isset($_POST['edit_expense_type']) && isset($_POST['type_id'], $_POST['type_name'])) {
+    $id = (int) $_POST['type_id'];
+    $n = trim((string) $_POST['type_name']);
+    if ($id > 0 && $n !== '') {
+        $old = $pdo->prepare('SELECT name FROM expense_types WHERE id = ?');
+        $old->execute([$id]);
+        $prev = $old->fetchColumn();
+        try {
+            $pdo->prepare('UPDATE expense_types SET name = ? WHERE id = ?')->execute([$n, $id]);
+            if ($prev && $prev !== $n) {
+                $pdo->prepare('UPDATE expenses SET category = ?, description = ? WHERE category = ?')
+                    ->execute([$n, $n, $prev]);
+            }
+            header('Location: expenses.php?msg=type_edited');
+        } catch (Throwable $e) {
+            header('Location: expenses.php?msg=type_dup');
+        }
+    }
+    exit;
+}
+
+if (isset($_GET['delete_type_id'])) {
+    $tid = (int) $_GET['delete_type_id'];
+    if ($tid > 0) {
+        $pdo->prepare('DELETE FROM expense_types WHERE id = ?')->execute([$tid]);
+    }
+    header('Location: expenses.php?msg=type_deleted');
+    exit;
+}
+
 // --- (المنطق البرمجي: الإضافة، التعديل، الحذف - بدون أي تغيير) ---
 if (isset($_POST['add_expense'])) {
     $amount = (float)$_POST['amount'];
@@ -58,7 +118,36 @@ if (isset($_GET['delete_id'])) {
     } catch (Exception $e) { $pdo->rollBack(); die("خطأ في الحذف: " . $e->getMessage()); }
 }
 
-$expenses = $pdo->query("SELECT * FROM expenses ORDER BY created_at DESC LIMIT 50")->fetchAll();
+$expense_types = $pdo->query('SELECT * FROM expense_types ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
+
+$filter_category = trim((string) ($_GET['filter_category'] ?? ''));
+$date_from = trim((string) ($_GET['date_from'] ?? ''));
+$date_to = trim((string) ($_GET['date_to'] ?? ''));
+
+$expWhere = ['1=1'];
+$expParams = [];
+if ($filter_category !== '') {
+    $expWhere[] = 'category = ?';
+    $expParams[] = $filter_category;
+}
+if ($date_from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_from)) {
+    $expWhere[] = 'DATE(created_at) >= ?';
+    $expParams[] = $date_from;
+}
+if ($date_to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) {
+    $expWhere[] = 'DATE(created_at) <= ?';
+    $expParams[] = $date_to;
+}
+$expSql = 'SELECT * FROM expenses WHERE ' . implode(' AND ', $expWhere) . ' ORDER BY created_at DESC LIMIT 500';
+$expStmt = $pdo->prepare($expSql);
+$expStmt->execute($expParams);
+$expenses = $expStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$sumFiltered = 0.0;
+foreach ($expenses as $ex) {
+    $sumFiltered += (float) $ex['amount'];
+}
+
 require_once '../includes/header.php'; 
 ?>
 
@@ -218,10 +307,54 @@ require_once '../includes/header.php';
                 <p class="text-muted mb-0 small">تتبع وخصم النفقات التشغيلية للمؤسسة</p>
             </div>
         </div>
-        <button class="btn btn-danger btn-lg rounded-pill shadow-sm px-4" data-bs-toggle="modal" data-bs-target="#addExpenseModal">
-            <i class="bi bi-plus-circle me-2"></i> تسجيل مصروف
-        </button>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-lg rounded-pill shadow-sm px-3" data-bs-toggle="modal" data-bs-target="#manageExpenseTypesModal">
+                <i class="bi bi-tags me-2"></i> أنواع المصروفات
+            </button>
+            <button class="btn btn-danger btn-lg rounded-pill shadow-sm px-4" data-bs-toggle="modal" data-bs-target="#addExpenseModal">
+                <i class="bi bi-plus-circle me-2"></i> تسجيل مصروف
+            </button>
+        </div>
     </div>
+
+    <?php
+    $expFlash = $_GET['msg'] ?? '';
+    if ($expFlash === 'type_added') {
+        echo '<div class="alert alert-success border-0 rounded-3 shadow-sm">تم إضافة نوع المصروف.</div>';
+    } elseif ($expFlash === 'type_edited') {
+        echo '<div class="alert alert-success border-0 rounded-3 shadow-sm">تم تحديث نوع المصروف والسجلات المرتبطة.</div>';
+    } elseif ($expFlash === 'type_deleted') {
+        echo '<div class="alert alert-info border-0 rounded-3 shadow-sm">تم حذف نوع المصروف من القائمة (سجلات المصروفات القديمة تبقى كما هي).</div>';
+    } elseif ($expFlash === 'type_dup') {
+        echo '<div class="alert alert-warning border-0 rounded-3 shadow-sm">اسم النوع مكرر أو غير صالح.</div>';
+    }
+    ?>
+
+    <form method="get" class="custom-card shadow-sm p-3 mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-muted mb-1">نوع المصروف</label>
+                <select name="filter_category" class="form-select">
+                    <option value="">— كل الأنواع —</option>
+                    <?php foreach ($expense_types as $t): ?>
+                        <option value="<?= htmlspecialchars($t['name'], ENT_QUOTES, 'UTF-8') ?>"<?= $filter_category === $t['name'] ? ' selected' : '' ?>><?= htmlspecialchars($t['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-muted mb-1">من تاريخ</label>
+                <input type="date" name="date_from" class="form-control" value="<?= htmlspecialchars($date_from) ?>">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-muted mb-1">إلى تاريخ</label>
+                <input type="date" name="date_to" class="form-control" value="<?= htmlspecialchars($date_to) ?>">
+            </div>
+            <div class="col-md-3 d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary flex-grow-1"><i class="bi bi-funnel me-1"></i> تطبيق</button>
+                <a href="expenses.php" class="btn btn-light border flex-grow-1">إعادة ضبط</a>
+            </div>
+        </div>
+    </form>
 
     <div class="row g-3 mb-4">
         <div class="col-md-4">
@@ -230,8 +363,8 @@ require_once '../includes/header.php';
                     <i class="bi bi-cash-stack fs-4"></i>
                 </div>
                 <div>
-                    <div class="text-muted small">إجمالي مصروفات الفترة</div>
-                    <div class="h5 fw-bold mb-0"><?= number_format(array_sum(array_column($expenses, 'amount')), 2) ?> ج.م</div>
+                    <div class="text-muted small">إجمالي النتائج المعروضة</div>
+                    <div class="h5 fw-bold mb-0"><?= number_format($sumFiltered, 2) ?> ج.م</div>
                 </div>
             </div>
         </div>
@@ -295,12 +428,9 @@ require_once '../includes/header.php';
                 <div class="mb-4">
                     <label class="form-label small fw-bold text-muted">نوع المصروف</label>
                     <select name="category" class="form-select form-select-lg" required>
-                        <option value="إيجار">إيجار</option>
-                        <option value="كهرباء/مياه">كهرباء / مياه</option>
-                        <option value="مرتبات">مرتبات</option>
-                        <option value="بضاعة">مشتريات/بضاعة</option>
-                        <option value="سلف عمال">سلف عمال</option>
-                        <option value="أخرى">أخرى</option>
+                        <?php foreach ($expense_types as $t): ?>
+                            <option value="<?= htmlspecialchars($t['name'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($t['name']) ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 
@@ -330,6 +460,52 @@ require_once '../includes/header.php';
                 </button>
             </div>
         </form>
+    </div>
+</div>
+
+<div class="modal fade" id="manageExpenseTypesModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content shadow-lg border-0" style="border-radius:16px;">
+            <div class="modal-header border-0">
+                <h5 class="modal-title fw-bold"><i class="bi bi-tags me-2 text-danger"></i> إدارة أنواع المصروفات</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form method="post" class="row g-2 align-items-end mb-4 pb-3 border-bottom">
+                    <div class="col-md-8">
+                        <label class="form-label small fw-bold text-muted">اسم نوع جديد</label>
+                        <input type="text" name="type_name" class="form-control" required maxlength="191" placeholder="مثال: مواصلات">
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" name="add_expense_type" value="1" class="btn btn-danger w-100 rounded-pill fw-bold">إضافة</button>
+                    </div>
+                </form>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead><tr><th>النوع</th><th class="text-center" style="width:200px">إجراءات</th></tr></thead>
+                        <tbody>
+                            <?php foreach ($expense_types as $t): ?>
+                            <tr>
+                                <td>
+                                    <form method="post" class="d-flex gap-2 flex-wrap align-items-center">
+                                        <input type="hidden" name="type_id" value="<?= (int) $t['id'] ?>">
+                                        <input type="text" name="type_name" class="form-control form-control-sm" value="<?= htmlspecialchars($t['name'], ENT_QUOTES, 'UTF-8') ?>" required maxlength="191">
+                                        <button type="submit" name="edit_expense_type" value="1" class="btn btn-sm btn-outline-primary rounded-pill">حفظ</button>
+                                    </form>
+                                </td>
+                                <td class="text-center">
+                                    <a href="?delete_type_id=<?= (int) $t['id'] ?>" class="btn btn-sm btn-outline-danger rounded-pill" onclick="return confirm('حذف هذا النوع من القائمة؟');">حذف</a>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                            <?php if (empty($expense_types)): ?>
+                            <tr><td colspan="2" class="text-muted text-center py-3">لا توجد أنواع بعد</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 

@@ -1,0 +1,48 @@
+أنت Senior UI/UX Designer متخصص في تصميم أنظمة ERP.
+
+المطلوب: تطبيق نظام الألوان من ملف colors.xml على جميع صفحات نظام ERP.
+
+⚠️ قواعد مهمة جداً:
+1. لا تقم بتغيير أي وظائف (functionality) أو منطق PHP
+2. فقط قم بتغيير الألوان و CSS variables
+3. حافظ على التصميم الحالي ولا تكسر أي شيء
+4. أضف دعم Dark Mode باستخدام data-theme attribute
+5. استخدم الألوان من ملف colors.xml
+
+📁 الملفات التي تحتاج لتعديل:
+- جميع الملفات في مجلد views/
+- ملف includes/header.php
+- أي ملفات CSS داخل الصفحات
+
+🎨 الألوان الأساسية:
+- Light Mode: bg-body: #f8fafc, bg-card: #ffffff, text-primary: #0f172a
+- Dark Mode: bg-body: #0f172a, bg-card: #1e293b, text-primary: #f1f5f9
+- Primary Color: #4f46e5 (light) / #6366f1 (dark)
+- Success: #10b981 (light) / #34d399 (dark)
+- Danger: #ef4444 (light) / #f87171 (dark)
+- Warning: #f59e0b (light) / #fbbf24 (dark)
+- Info: #3b82f6 (light) / #60a5fa (dark)
+
+🔧 كيفية التطبيق:
+1. اقرأ ملف colors.xml للحصول على جميع الألوان
+2. أضف CSS variables في بداية كل ملف أو في ملف header.php
+3. استبدل جميع الألوان الثابتة بـ var(--variable-name)
+4. أضف زر تبديل الوضع (Dark/Light mode toggle)
+5. احفظ اختيار المستخدم في localStorage
+
+✅ النتيجة المتوقعة:
+- نظام ألوان موحد في جميع الصفحات
+- Dark mode يعمل بشكل صحيح مع تباين جيد
+- تصميم احترافي مثل أنظمة ERP العالمية
+- لا توجد أخطاء أو تغييرات في الوظائف
+
+ابدأ الآن في تطبيق التعديلات!
+
+@read .cursor/colors.xml
+@read .cursor/design-system.xml
+
+Apply the color system from colors.xml to all my ERP PHP files in the views/ folder. 
+Update all hardcoded colors to use CSS variables. 
+Add dark/light mode toggle functionality. 
+Do NOT change any PHP logic or functionality. 
+Only update CSS styles and add theme switching.

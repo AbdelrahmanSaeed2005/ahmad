@@ -2,10 +2,15 @@
 // includes/sidebar_employee.php
 // Sidebar للموظف مع تحسين UI/UX
 ?>
-<div class="sidebar">
+<div class="sidebar" id="erp-sidebar">
     <div class="sidebar-header">
-        <h4>قائمة الموظف</h4>
-        <small>Employee Panel</small>
+        <div class="sidebar-header-text">
+            <h4>قائمة الموظف</h4>
+            <small>Employee Panel</small>
+        </div>
+        <button type="button" class="sidebar-inner-toggle" data-erp-sidebar-toggle title="إخفاء القائمة" aria-label="إخفاء القائمة">
+            <i class="bi bi-chevron-double-right"></i>
+        </button>
     </div>
     
     <ul class="sidebar-nav nav flex-column">

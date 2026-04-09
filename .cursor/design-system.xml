@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+  File Path: .cursor/design-system.xml
+  Description: Design System Instructions for Cursor AI
+  Purpose: Apply consistent colors to the entire ERP system
+-->
+
+<design-system>
+  <version>1.0.0</version>
+  <name>ERP Professional Design System</name>
+  
+  <!-- ============================================ -->
+  <!-- DESIGN TOKENS                               -->
+  <!-- ============================================ -->
+  
+  <tokens>
+    <!-- Border Radius System -->
+    <radius name="xs" value="4px" />
+    <radius name="sm" value="6px" />
+    <radius name="md" value="8px" />
+    <radius name="lg" value="12px" />
+    <radius name="xl" value="16px" />
+    <radius name="2xl" value="20px" />
+    <radius name="full" value="9999px" />
+    
+    <!-- Spacing System -->
+    <spacing name="0" value="0" />
+    <spacing name="1" value="0.25rem" />
+    <spacing name="2" value="0.5rem" />
+    <spacing name="3" value="0.75rem" />
+    <spacing name="4" value="1rem" />
+    <spacing name="5" value="1.25rem" />
+    <spacing name="6" value="1.5rem" />
+    <spacing name="8" value="2rem" />
+    <spacing name="10" value="2.5rem" />
+    <spacing name="12" value="3rem" />
+    <spacing name="16" value="4rem" />
+    <spacing name="20" value="5rem" />
+    
+    <!-- Typography -->
+    <typography>
+      <font-family value="'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif" />
+      <font-size-xs value="0.75rem" />
+      <font-size-sm value="0.875rem" />
+      <font-size-base value="1rem" />
+      <font-size-lg value="1.125rem" />
+      <font-size-xl value="1.25rem" />
+      <font-size-2xl value="1.5rem" />
+      <font-size-3xl value="1.875rem" />
+      <font-size-4xl value="2.25rem" />
+      
+      <font-weight-normal value="400" />
+      <font-weight-medium value="500" />
+      <font-weight-semibold value="600" />
+      <font-weight-bold value="700" />
+      
+      <line-height-tight value="1.25" />
+      <line-height-normal value="1.5" />
+      <line-height-relaxed value="1.625" />
+    </typography>
+    
+    <!-- Transitions -->
+    <transition name="fast" value="0.15s ease" />
+    <transition name="base" value="0.2s ease" />
+    <transition name="slow" value="0.3s ease" />
+    <transition name="bounce" value="0.5s cubic-bezier(0.34, 1.56, 0.64, 1)" />
+  </tokens>
+  
+  <!-- ============================================ -->
+  <!-- COMPONENT STYLES                            -->
+  <!-- ============================================ -->
+  
+  <components>
+    <!-- Card Styles -->
+    <component name="card">
+      <property name="background" value="var(--bg-card)" />
+      <property name="border" value="1px solid var(--border-light)" />
+      <property name="border-radius" value="var(--radius-lg)" />
+      <property name="box-shadow" value="var(--shadow-sm)" />
+      <property name="transition" value="var(--transition-base)" />
+      <property name="hover-transform" value="translateY(-4px)" />
+      <property name="hover-shadow" value="var(--shadow-lg)" />
+      <property name="hover-border-color" value="var(--primary-light)" />
+    </component>
+    
+    <!-- Button Styles -->
+    <component name="button">
+      <property name="padding" value="var(--space-3) var(--space-5)" />
+      <property name="border-radius" value="var(--radius-md)" />
+      <property name="font-weight" value="var(--font-weight-semibold)" />
+      <property name="transition" value="var(--transition-base)" />
+      
+      <variant name="primary">
+        <property name="background" value="var(--primary)" />
+        <property name="color" value="white" />
+        <property name="hover-background" value="var(--primary-dark)" />
+        <property name="hover-transform" value="translateY(-2px)" />
+        <property name="hover-shadow" value="0 8px 16px -4px var(--primary-glow)" />
+      </variant>
+      
+      <variant name="secondary">
+        <property name="background" value="var(--secondary)" />
+        <property name="color" value="white" />
+      </variant>
+      
+      <variant name="outline">
+        <property name="background" value="transparent" />
+        <property name="border" value="1px solid var(--border-medium)" />
+        <property name="color" value="var(--text-secondary)" />
+        <property name="hover-border-color" value="var(--primary)" />
+        <property name="hover-color" value="var(--primary)" />
+      </variant>
+    </component>
+    
+    <!-- Input Styles -->
+    <component name="input">
+      <property name="background" value="var(--bg-input)" />
+      <property name="border" value="2px solid var(--border-light)" />
+      <property name="border-radius" value="var(--radius-md)" />
+      <property name="color" value="var(--text-primary)" />
+      <property name="padding" value="var(--space-3) var(--space-4)" />
+      <property name="transition" value="var(--transition-base)" />
+      <property name="focus-border-color" value="var(--primary)" />
+      <property name="focus-shadow" value="0 0 0 4px var(--primary-glow)" />
+      <property name="focus-outline" value="none" />
+    </component>
+    
+    <!-- Table Styles -->
+    <component name="table">
+      <property name="width" value="100%" />
+      <property name="border-collapse" value="separate" />
+      <property name="border-spacing" value="0" />
+      
+      <part name="header">
+        <property name="background" value="var(--bg-table-header)" />
+        <property name="color" value="var(--text-muted)" />
+        <property name="font-weight" value="var(--font-weight-semibold)" />
+        <property name="font-size" value="var(--font-size-xs)" />
+        <property name="text-transform" value="uppercase" />
+        <property name="letter-spacing" value="0.05em" />
+        <property name="padding" value="var(--space-4)" />
+      </part>
+      
+      <part name="row">
+        <property name="transition" value="var(--transition-fast)" />
+        <property name="hover-background" value="var(--bg-hover)" />
+        <property name="hover-transform" value="scale(1.002)" />
+      </part>
+      
+      <part name="cell">
+        <property name="padding" value="var(--space-4)" />
+        <property name="border-bottom" value="1px solid var(--border-light)" />
+      </part>
+    </component>
+    
+    <!-- Sidebar Styles -->
+    <component name="sidebar">
+      <property name="background" value="var(--bg-sidebar)" />
+      <property name="border-left" value="1px solid var(--border-light)" />
+      <property name="box-shadow" value="var(--shadow-lg)" />
+      <property name="width" value="280px" />
+      
+      <part name="nav-link">
+        <property name="color" value="var(--text-secondary)" />
+        <property name="padding" value="var(--space-3) var(--space-4)" />
+        <property name="border-radius" value="var(--radius-md)" />
+        <property name="transition" value="var(--transition-fast)" />
+        <property name="hover-background" value="var(--bg-hover)" />
+        <property name="hover-color" value="var(--primary)" />
+        <property name="active-background" value="var(--primary-glow)" />
+        <property name="active-color" value="var(--primary)" />
+      </part>
+    </component>
+    
+    <!-- Badge Styles -->
+    <component name="badge">
+      <property name="padding" value="0.35rem 1rem" />
+      <property name="border-radius" value="var(--radius-full)" />
+      <property name="font-size" value="var(--font-size-sm)" />
+      <property name="font-weight" value="var(--font-weight-semibold)" />
+      
+      <variant name="success">
+        <property name="background" value="var(--success-light)" />
+        <property name="color" value="var(--success)" />
+      </variant>
+      
+      <variant name="danger">
+        <property name="background" value="var(--danger-light)" />
+        <property name="color" value="var(--danger)" />
+      </variant>
+      
+      <variant name="warning">
+        <property name="background" value="var(--warning-light)" />
+        <property name="color" value="var(--warning)" />
+      </variant>
+      
+      <variant name="info">
+        <property name="background" value="var(--info-light)" />
+        <property name="color" value="var(--info)" />
+      </variant>
+    </component>
+  </components>
+  
+  <!-- ============================================ -->
+  <!-- INSTRUCTION FOR CURSOR                      -->
+  <!-- ============================================ -->
+  
+  <instructions>
+    <task>
+      <title>Apply Color System to ERP Project</title>
+      
+      <steps>
+        <step>
+          <action>Read the colors.xml file to get the complete color palette</action>
+        </step>
+        
+        <step>
+          <action>Replace ALL hardcoded colors in all PHP/CSS files with CSS variables</action>
+          <details>
+            <item>Change background colors to use var(--bg-body), var(--bg-card), etc.</item>
+            <item>Change text colors to use var(--text-primary), var(--text-secondary), var(--text-muted)</item>
+            <item>Change border colors to use var(--border-light), var(--border-medium)</item>
+            <item>Change primary button colors to use var(--primary), var(--primary-dark), var(--primary-light)</item>
+            <item>Change success/danger/warning/info colors to use semantic variables</item>
+          </details>
+        </step>
+        
+        <step>
+          <action>Add data-theme attribute to html element for theme switching</action>
+          <code>
+            <![CDATA[
+            <html lang="ar" dir="rtl" data-theme="light">
+            ]]>
+          </code>
+        </step>
+        
+        <step>
+          <action>Add theme toggle JavaScript to all pages</action>
+          <code>
+            <![CDATA[
+            function toggleTheme() {
+                const html = document.documentElement;
+                const current = html.getAttribute('data-theme') || 'light';
+                const target = current === 'dark' ? 'light' : 'dark';
+                html.setAttribute('data-theme', target);
+                localStorage.setItem('theme', target);
+            }
+            
+            // Load saved theme
+            const saved = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', saved);
+            ]]>
+          </code>
+        </step>
+        
+        <step>
+          <action>Update all CSS files to use CSS variables instead of hardcoded colors</action>
+          <example>
+            <![CDATA[
+            /* Before */
+            .card { background: #ffffff; border: 1px solid #e2e8f0; }
+            
+            /* After */
+            .card { background: var(--bg-card); border: 1px solid var(--border-light); }
+            ]]>
+          </example>
+        </step>
+        
+        <step>
+          <action>Ensure dark mode has proper contrast (text readable on dark backgrounds)</action>
+        </step>
+        
+        <step>
+          <action>Add smooth transition between light and dark modes</action>
+          <code>
+            <![CDATA[
+            * {
+                transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+            }
+            ]]>
+          </code>
+        </step>
+      </steps>
+      
+      <files-to-update>
+        <file>views/admin_dashboard.php</file>
+        <file>views/employee_dashboard.php</file>
+        <file>views/pos.php</file>
+        <file>views/products.php</file>
+        <file>views/customers.php</file>
+        <file>views/suppliers.php</file>
+        <file>views/invoices.php</file>
+        <file>views/purchases.php</file>
+        <file>views/returns.php</file>
+        <file>views/expenses.php</file>
+        <file>views/reports.php</file>
+        <file>views/withdrawals.php</file>
+        <file>views/users.php</file>
+        <file>views/whatsapp.php</file>
+        <file>includes/header.php</file>
+      </files-to-update>
+    </task>
+  </instructions>
+</design-system>

@@ -91,8 +91,22 @@ $stmt = $pdo->prepare("SELECT SUM(amount) FROM expenses WHERE created_at > ?");
 $stmt->execute([$filter_date]);
 $total_expenses = $stmt->fetchColumn() ?: 0;
 
-// أرباح المبيعات (يشمل الكريد لأن الربح مرتبط ببيع البضاعة وليس بوقت التحصيل)
-$stmt = $pdo->prepare("SELECT SUM((ii.price - p.cost_price) * ii.quantity) FROM invoice_items ii JOIN products p ON ii.product_id = p.id JOIN invoices i ON ii.invoice_id = i.id WHERE i.created_at > ?");
+// أرباح المبيعات (خصم الفاتورة يُخصم مباشرة من ربح البضاعة)
+$stmt = $pdo->prepare("
+    SELECT COALESCE(SUM(t.item_profit - t.invoice_discount), 0)
+    FROM (
+        SELECT
+            i.id,
+            i.created_at,
+            COALESCE(i.invoice_discount, 0) AS invoice_discount,
+            SUM((ii.price - p.cost_price) * ii.quantity) AS item_profit
+        FROM invoices i
+        JOIN invoice_items ii ON ii.invoice_id = i.id
+        JOIN products p ON p.id = ii.product_id
+        GROUP BY i.id, i.created_at, i.invoice_discount
+    ) t
+    WHERE t.created_at > ?
+");
 $stmt->execute([$filter_date]);
 $sales_profit = $stmt->fetchColumn() ?: 0;
 

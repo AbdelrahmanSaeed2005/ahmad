@@ -4,7 +4,7 @@ require_once '../includes/auth.php';
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
-$stmt = $pdo->prepare("SELECT i.id, i.created_at, i.total_amount, i.payment_method,
+$stmt = $pdo->prepare("SELECT i.id, i.created_at, i.total_amount, i.invoice_discount, i.payment_method,
                               i.customer_id, i.walkin_customer_name, i.walkin_customer_phone,
                               u.username,
                               c.name AS registered_customer_name,
@@ -42,6 +42,8 @@ $paymentLabels = [
     'vodafone' => 'فودافون'
 ];
 $paymentMethod = $paymentLabels[$invoice['payment_method']] ?? $invoice['payment_method'];
+$invoiceDiscount = (float)($invoice['invoice_discount'] ?? 0);
+$subTotalBeforeDiscount = (float)$invoice['total_amount'] + $invoiceDiscount;
 $invoiceDateTimeForShare = date('Y/m/d - h:i A', strtotime($invoice['created_at']));
 $itemsForShare = [];
 foreach ($items as $item) {
@@ -380,6 +382,16 @@ foreach ($items as $item) {
                     <span>إجمالي المبلغ</span>
                     <span class="amount"><?= number_format((float)$invoice['total_amount'], 2) ?> ج.م</span>
                 </div>
+                <?php if ($invoiceDiscount > 0): ?>
+                    <div class="meta-item mt-3">
+                        <div class="label">إجمالي قبل الخصم</div>
+                        <div class="value"><?= number_format($subTotalBeforeDiscount, 2) ?> ج.م</div>
+                    </div>
+                    <div class="meta-item mt-2">
+                        <div class="label">الخصم على الفاتورة</div>
+                        <div class="value text-danger">- <?= number_format($invoiceDiscount, 2) ?> ج.م</div>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <div class="invoice-footer">

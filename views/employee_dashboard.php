@@ -18,60 +18,74 @@ $start_of_day = $view_date . " 00:00:00";
 $end_of_day   = $view_date . " 23:59:59";
 
 try {
-    // ================ المبيعات من invoices ================
+    // ================ عدد الفواتير وإجمالي الآجل من invoices ================
     $stmt = $pdo->prepare("
         SELECT 
-            SUM(CASE WHEN payment_method = 'cash' THEN total_amount ELSE 0 END) as cash_total,
             SUM(CASE WHEN payment_method = 'credit' THEN total_amount ELSE 0 END) as credit_total,
-            SUM(CASE WHEN payment_method = 'vodafone' THEN total_amount ELSE 0 END) as vodafone_total,
-            SUM(CASE WHEN payment_method = 'bank' THEN total_amount ELSE 0 END) as bank_total,
-            COUNT(*) as total_invoices,
-            SUM(total_amount) as grand_total
+            COUNT(*) as total_invoices
         FROM invoices 
         WHERE created_at BETWEEN ? AND ?
     ");
     $stmt->execute([$start_of_day, $end_of_day]);
     $stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stats['credit_total'] = (float)($stats['credit_total'] ?? 0);
+    $stats['total_invoices'] = (int)($stats['total_invoices'] ?? 0);
 
-    // التأكد من عدم وجود قيم NULL
-    foreach ($stats as $key => $value) {
-        $stats[$key] = $value ?: 0;
-    }
-
-    // ================ التحصيلات من cash_transactions ================
+    // ================ حركة المحافظ (مثل لوحة الأدمن) ================
     $stmt = $pdo->prepare("
         SELECT 
-            SUM(CASE WHEN payment_method = 'cash' AND type = 'income' AND description LIKE '%تحصيل%' THEN amount ELSE 0 END) as cash_collection,
-            SUM(CASE WHEN payment_method = 'vodafone' AND type = 'income' AND description LIKE '%تحصيل%' THEN amount ELSE 0 END) as vodafone_collection,
-            SUM(CASE WHEN payment_method = 'bank' AND type = 'income' AND description LIKE '%تحصيل%' THEN amount ELSE 0 END) as bank_collection,
-            COUNT(CASE WHEN description LIKE '%تحصيل%' THEN 1 END) as collection_count
+            payment_method,
+            SUM(CASE WHEN type='income' THEN amount ELSE 0 END) AS in_total,
+            SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS out_total,
+            SUM(CASE WHEN type='income' AND (related_type='customer_collection' OR description LIKE '%تحصيل%') THEN amount ELSE 0 END) AS collection_total,
+            SUM(CASE WHEN type='expense' AND related_type='return' THEN amount ELSE 0 END) AS return_total
         FROM cash_transactions 
         WHERE created_at BETWEEN ? AND ?
+          AND payment_method IN ('cash','vodafone','bank')
+        GROUP BY payment_method
     ");
     $stmt->execute([$start_of_day, $end_of_day]);
-    $collections = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    $cash_collection = $collections['cash_collection'] ?? 0;
-    $vodafone_collection = $collections['vodafone_collection'] ?? 0;
-    $bank_collection = $collections['bank_collection'] ?? 0;
-    $collection_count = $collections['collection_count'] ?? 0;
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $byMethod = [
+        'cash' => ['in' => 0.0, 'out' => 0.0, 'collection' => 0.0, 'return' => 0.0],
+        'vodafone' => ['in' => 0.0, 'out' => 0.0, 'collection' => 0.0, 'return' => 0.0],
+        'bank' => ['in' => 0.0, 'out' => 0.0, 'collection' => 0.0, 'return' => 0.0],
+    ];
+    foreach ($rows as $r) {
+        $m = $r['payment_method'];
+        if (!isset($byMethod[$m])) continue;
+        $byMethod[$m]['in'] = (float)($r['in_total'] ?? 0);
+        $byMethod[$m]['out'] = (float)($r['out_total'] ?? 0);
+        $byMethod[$m]['collection'] = (float)($r['collection_total'] ?? 0);
+        $byMethod[$m]['return'] = (float)($r['return_total'] ?? 0);
+    }
+
+    $cash_total = $byMethod['cash']['in'] - $byMethod['cash']['out'];
+    $vodafone_total = $byMethod['vodafone']['in'] - $byMethod['vodafone']['out'];
+    $bank_total = $byMethod['bank']['in'] - $byMethod['bank']['out'];
+    $cash_collection = $byMethod['cash']['collection'];
+    $vodafone_collection = $byMethod['vodafone']['collection'];
+    $bank_collection = $byMethod['bank']['collection'];
+    $returns_total = $byMethod['cash']['return'] + $byMethod['vodafone']['return'] + $byMethod['bank']['return'];
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM cash_transactions WHERE created_at BETWEEN ? AND ? AND type='income' AND (related_type='customer_collection' OR description LIKE '%تحصيل%')");
+    $stmt->execute([$start_of_day, $end_of_day]);
+    $collection_count = (int)($stmt->fetchColumn() ?: 0);
 
     // ================ إجمالي المديونية المستحقة على العملاء ================
     $stmt = $pdo->query("SELECT COALESCE(SUM(balance), 0) as total_credit_balance FROM customers WHERE deleted_at IS NULL");
     $total_credit_balance = $stmt->fetchColumn() ?: 0;
-
-    // ✅ حساب المرتجعات
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(return_price), 0) FROM returns WHERE created_at BETWEEN ? AND ?");
-    $stmt->execute([$start_of_day, $end_of_day]);
-    $returns_total = $stmt->fetchColumn() ?: 0;
 
     // ✅ حساب عدد المرتجعات
     $stmt = $pdo->prepare("SELECT COUNT(id) FROM returns WHERE created_at BETWEEN ? AND ?");
     $stmt->execute([$start_of_day, $end_of_day]);
     $returns_count = $stmt->fetchColumn() ?: 0;
 
-    // ✅ صافي النقدية = المبيعات النقدية + التحصيلات النقدية - المرتجعات
-    $net_cash = $stats['cash_total'] + $cash_collection - $returns_total;
+    $stats['cash_total'] = $cash_total;
+    $stats['vodafone_total'] = $vodafone_total;
+    $stats['bank_total'] = $bank_total;
+    $stats['grand_total'] = $cash_total + $vodafone_total + $bank_total + $stats['credit_total'];
+    $net_cash = $cash_total;
 
 } catch (PDOException $e) {
     die("خطأ في قاعدة البيانات: " . $e->getMessage());
@@ -119,7 +133,7 @@ require_once '../includes/header.php';
     
     <div id="printable-report" class="text-center">
         <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
-            <h3 class="text-primary fw-bold">إمبراطورية التجارة (اسم المحل)</h3>
+            <h3 class="text-primary fw-bold">Ark4n | اركان للحلول البرمجيه</h3>
             <div class="text-end small">
                 <div>التاريخ: <?= $view_date ?></div>
                 <div>وقت الطباعة: <?= date('h:i A') ?></div>
@@ -127,46 +141,26 @@ require_once '../includes/header.php';
         </div>
         <h4 class="mb-4 bg-light py-2">تقرير تقفيل الوردية الختامي</h4>
         
-        <!-- ملخص طرق الدفع في التقرير -->
+        <!-- ملخص طرق الدفع المختصر -->
         <table class="table table-bordered shadow-sm mb-4">
-            <tr class="table-info">
-                <th colspan="2" class="text-center">تفاصيل المبيعات والتحصيلات</th>
+            <tr class="table-primary">
+                <th colspan="2" class="text-center">ملخص الوردية</th>
             </tr>
             <tr>
                 <th>نقدي 💵</th>
-                <td class="fw-bold"><?= number_format($stats['cash_total'], 2) ?> ج.م</td>
-            </tr>
-            <tr>
-                <th>تحصيل نقدي 💰</th>
-                <td class="fw-bold text-success">+ <?= number_format($cash_collection, 2) ?> ج.م</td>
+                <td class="fw-bold"><?= number_format($cash_total, 2) ?> ج.م</td>
             </tr>
             <tr>
                 <th>فودافون كاش 📱</th>
-                <td class="fw-bold"><?= number_format($stats['vodafone_total'], 2) ?> ج.م</td>
-            </tr>
-            <tr>
-                <th>تحصيل فودافون 📱</th>
-                <td class="fw-bold text-success">+ <?= number_format($vodafone_collection, 2) ?> ج.م</td>
+                <td class="fw-bold"><?= number_format($vodafone_total, 2) ?> ج.م</td>
             </tr>
             <tr>
                 <th>تحويل بنكي 🏦</th>
-                <td class="fw-bold"><?= number_format($stats['bank_total'], 2) ?> ج.م</td>
-            </tr>
-            <tr>
-                <th>تحصيل بنكي 🏦</th>
-                <td class="fw-bold text-success">+ <?= number_format($bank_collection, 2) ?> ج.م</td>
-            </tr>
-            <tr>
-                <th>آجل (على الحساب) 📝</th>
-                <td class="fw-bold"><?= number_format($stats['credit_total'], 2) ?> ج.م</td>
-            </tr>
-            <tr class="table-warning">
-                <th>إجمالي المديونية المستحقة</th>
-                <td class="fw-bold"><?= number_format($total_credit_balance, 2) ?> ج.م</td>
+                <td class="fw-bold"><?= number_format($bank_total, 2) ?> ج.م</td>
             </tr>
             <tr class="table-success">
                 <th>الإجمالي الكلي للمبيعات</th>
-                <td class="fw-bold fs-5"><?= number_format($stats['grand_total'], 2) ?> ج.م</td>
+                <td class="fw-bold fs-5"><?= number_format($cash_total + $vodafone_total + $bank_total, 2) ?> ج.م</td>
             </tr>
         </table>
 
@@ -247,7 +241,7 @@ require_once '../includes/header.php';
             </div>
         </div>
 
-        <!-- بطاقة المديونية المستحقة -->
+        <!-- بطاقة المديونية المستحقة
         <div class="row g-3 mb-4">
             <div class="col-12">
                 <div class="card border-0 shadow-sm rounded-4 bg-warning bg-opacity-10 stat-card">
@@ -255,14 +249,14 @@ require_once '../includes/header.php';
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <h6 class="fw-bold small text-warning">إجمالي المديونية المستحقة على العملاء</h6>
-                                <h2 class="fw-bold text-warning"><?= number_format($total_credit_balance, 2) ?> <small>ج.م</small></h2>
+                                <h2 class="fw-bold text-warning">?= number_format($total_credit_balance, 2) ?> <small>ج.م</small></h2>
                             </div>
                             <i class="bi bi-credit-card fs-1 text-warning opacity-50"></i>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </div> -->
 
         <!-- تفاصيل طرق الدفع (مع إضافة التحصيلات) -->
         <div class="row g-3 mb-5">
@@ -270,13 +264,12 @@ require_once '../includes/header.php';
                 <div class="card border-0 shadow-sm rounded-4 bg-light stat-card">
                     <div class="card-body text-center p-3">
                         <h6 class="text-muted small mb-1">نقدي</h6>
-                        <h5 class="fw-bold text-primary mb-0"><?= number_format($stats['cash_total'] + $cash_collection, 2) ?> <small>ج.م</small></h5>
-                        <small class="text-muted">مبيعات: <?= number_format($stats['cash_total'], 2) ?></small><br>
-                        <small class="text-success">تحصيل: <?= number_format($cash_collection, 2) ?></small>
+                        <h5 class="fw-bold text-primary mb-0"><?= number_format($cash_total, 2) ?> <small>ج.م</small></h5>
+                        <small class="text-muted">صافي بعد المرتجعات</small>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3 col-6">
+            <!-- <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm rounded-4 bg-light stat-card">
                     <div class="card-body text-center p-3">
                         <h6 class="text-muted small mb-1">آجل</h6>
@@ -285,14 +278,13 @@ require_once '../includes/header.php';
                         <small class="text-warning">مستحق: <?= number_format($total_credit_balance, 2) ?></small>
                     </div>
                 </div>
-            </div>
+            </div> -->
             <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm rounded-4 bg-light stat-card">
                     <div class="card-body text-center p-3">
                         <h6 class="text-muted small mb-1">فودافون</h6>
-                        <h5 class="fw-bold text-info mb-0"><?= number_format($stats['vodafone_total'] + $vodafone_collection, 2) ?> <small>ج.م</small></h5>
-                        <small class="text-muted">مبيعات: <?= number_format($stats['vodafone_total'], 2) ?></small><br>
-                        <small class="text-success">تحصيل: <?= number_format($vodafone_collection, 2) ?></small>
+                        <h5 class="fw-bold text-info mb-0"><?= number_format($vodafone_total, 2) ?> <small>ج.م</small></h5>
+                        <small class="text-muted">صافي بعد المرتجعات</small>
                     </div>
                 </div>
             </div>
@@ -300,9 +292,8 @@ require_once '../includes/header.php';
                 <div class="card border-0 shadow-sm rounded-4 bg-light stat-card">
                     <div class="card-body text-center p-3">
                         <h6 class="text-muted small mb-1">بنكي</h6>
-                        <h5 class="fw-bold text-secondary mb-0"><?= number_format($stats['bank_total'] + $bank_collection, 2) ?> <small>ج.م</small></h5>
-                        <small class="text-muted">مبيعات: <?= number_format($stats['bank_total'], 2) ?></small><br>
-                        <small class="text-success">تحصيل: <?= number_format($bank_collection, 2) ?></small>
+                        <h5 class="fw-bold text-secondary mb-0"><?= number_format($bank_total, 2) ?> <small>ج.م</small></h5>
+                        <small class="text-muted">صافي بعد المرتجعات</small>
                     </div>
                 </div>
             </div>
@@ -316,7 +307,7 @@ require_once '../includes/header.php';
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <h6 class="fw-bold small opacity-75">إجمالي المبيعات (جميع الطرق)</h6>
-                                <h2 class="fw-bold mb-0"><?= number_format($stats['grand_total'], 2) ?> ج.م</h2>
+                                <h2 class="fw-bold mb-0"><?= number_format($cash_total + $vodafone_total + $bank_total, 2) ?> ج.م</h2>
                             </div>
                             <i class="bi bi-graph-up-arrow fs-1 opacity-50"></i>
                         </div>

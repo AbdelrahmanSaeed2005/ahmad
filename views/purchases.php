@@ -741,6 +741,36 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
+// منع حفظ الفورم بـ Enter + تنقل ذكي بين حقول الصف
+document.getElementById('purchaseForm').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    e.preventDefault();
+
+    const row = target.closest('.item-row');
+    if (!row) return;
+
+    const order = [
+        'input[name*="[name]"]',
+        '.barcode-input',
+        '.qty',
+        '.price',
+        'input[name*="[sell_p]"]',
+        'input[name*="[min_p]"]'
+    ];
+    const focusables = order.map(sel => row.querySelector(sel)).filter(Boolean);
+    const idx = focusables.indexOf(target);
+    if (idx === -1) return;
+
+    if (idx < focusables.length - 1) {
+        focusables[idx + 1].focus();
+        focusables[idx + 1].select?.();
+    } else {
+        addRow();
+    }
+});
+
 // ========== Initialize Theme ==========
 document.addEventListener('DOMContentLoaded', function() {
     const savedTheme = localStorage.getItem('theme') || 'light';

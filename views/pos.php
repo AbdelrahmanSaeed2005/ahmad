@@ -3,6 +3,16 @@
 require_once '../includes/db_connect.php';
 require_once '../includes/auth.php';
 
+// ضمان وجود حقول الخصم داخل الفاتورة (يُنفذ مرة واحدة)
+try {
+    $col = $pdo->query("SHOW COLUMNS FROM invoices LIKE 'invoice_discount'")->fetch();
+    if (!$col) {
+        $pdo->exec("ALTER TABLE invoices ADD COLUMN invoice_discount DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER total_amount");
+    }
+} catch (Throwable $e) {
+    // تجاهل الخطأ لتفادي تعطيل الشاشة إذا كانت صلاحيات ALTER غير متاحة
+}
+
 // --- 1. معالجة طلبات AJAX ---
 if (isset($_GET['action'])) {
     header('Content-Type: application/json');
@@ -84,7 +94,9 @@ if (isset($_GET['action'])) {
         $data = json_decode(file_get_contents('php://input'), true);
         try {
             $pdo->beginTransaction();
-            $total = $data['total'];
+            $subtotal = (float) ($data['subtotal'] ?? 0);
+            $discount = (float) ($data['discount'] ?? 0);
+            $total = (float) ($data['total'] ?? 0);
             $method = $data['method'];
             
             // معالجة العميل المؤقت
@@ -101,6 +113,8 @@ if (isset($_GET['action'])) {
             
             $user_id = $_SESSION['user_id'];
             
+            $calculated_subtotal = 0.0;
+            $min_invoice_total = 0.0;
             foreach ($data['cart'] as $item) {
                 $check_stmt = $pdo->prepare("SELECT name, selling_price, min_selling_price, stock_quantity, cost_price FROM products WHERE id = ? AND deleted_at IS NULL");
                 $check_stmt->execute([$item['id']]);
@@ -109,12 +123,30 @@ if (isset($_GET['action'])) {
                 if ($product['stock_quantity'] < $item['qty']) throw new Exception("الكمية غير كافية للمنتج " . $product['name']);
                 if ($item['custom_price'] < $product['min_selling_price']) throw new Exception("السعر أقل من الحد الأدنى للمنتج " . $product['name']);
                 if ((float) $item['custom_price'] < (float) $product['cost_price']) throw new Exception("لا يمكن البيع بأقل من تكلفة المنتج: " . $product['name']);
+                $line_qty = (float) $item['qty'];
+                $line_price = (float) $item['custom_price'];
+                $calculated_subtotal += ($line_qty * $line_price);
+                $min_invoice_total += ($line_qty * (float) $product['min_selling_price']);
+            }
+
+            if ($discount < 0) {
+                throw new Exception("الخصم غير صالح");
+            }
+            if (abs($calculated_subtotal - $subtotal) > 0.01) {
+                $subtotal = $calculated_subtotal;
+            }
+            if ($discount > $subtotal) {
+                throw new Exception("الخصم أكبر من إجمالي الفاتورة");
+            }
+            $final_total = $subtotal - $discount;
+            if ($final_total < $min_invoice_total - 0.01) {
+                throw new Exception("لا يمكن تطبيق هذا الخصم لأن إجمالي الفاتورة سينخفض تحت الحد الأدنى المسموح");
             }
             
             $stmt = $pdo->prepare("INSERT INTO invoices 
-                (customer_id, user_id, total_amount, payment_method, walkin_customer_name, walkin_customer_phone) 
-                VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$cust_id, $user_id, $total, $method, $walkin_name, $walkin_phone]);
+                (customer_id, user_id, total_amount, invoice_discount, payment_method, walkin_customer_name, walkin_customer_phone) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$cust_id, $user_id, $final_total, $discount, $method, $walkin_name, $walkin_phone]);
             $sale_id = $pdo->lastInsertId();
             
             foreach ($data['cart'] as $item) {
@@ -124,7 +156,7 @@ if (isset($_GET['action'])) {
             }
             
             if ($method === 'credit' && $cust_id) {
-                $pdo->prepare("UPDATE customers SET balance = balance + ? WHERE id = ?")->execute([$total, $cust_id]);
+                $pdo->prepare("UPDATE customers SET balance = balance + ? WHERE id = ?")->execute([$final_total, $cust_id]);
             } else {
                 $description = "بيع فاتورة رقم #$sale_id - طريقة: $method";
                 if ($walkin_name) {
@@ -132,7 +164,7 @@ if (isset($_GET['action'])) {
                 }
                 recordTransaction($pdo, [
                     'direction' => 'in',
-                    'amount' => (float) $total,
+                    'amount' => (float) $final_total,
                     'payment_method' => $method,
                     'description' => $description,
                     'user_id' => (int) $user_id,
@@ -140,7 +172,7 @@ if (isset($_GET['action'])) {
                     'related_id' => (int) $sale_id,
                 ]);
                 if ($method !== 'cash') {
-                    $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")->execute([$total, $method]);
+                    $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")->execute([$final_total, $method]);
                 }
             }
             
@@ -1012,6 +1044,12 @@ require_once '../includes/header.php';
             <hr class="opacity-10 mb-4">
 
             <div class="mb-3">
+                <label class="form-label small fw-bold text-muted">خصم على كامل الفاتورة</label>
+                <input type="number" id="invoiceDiscount" class="form-control form-select-lg rounded-3" value="0" min="0" step="0.01">
+                <small id="discountHint" class="text-muted"></small>
+            </div>
+
+            <div class="mb-3">
                 <label class="form-label small fw-bold text-muted">طريقة الدفع</label>
                 <div class="payment-grid d-flex flex-wrap gap-2">
                     <select class="form-select form-select-lg rounded-3" id="paymentMethod" onchange="toggleCustomer()">
@@ -1343,7 +1381,7 @@ function initUsbBarcodeScannerRouting() {
         if (tag === 'textarea') return;
         if (tag === 'input') {
             const id = active.id || '';
-            if (id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone') return;
+            if (id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone' || id === 'invoiceDiscount') return;
             if (active.classList.contains('qty-input') || active.classList.contains('price-input')) return;
         }
         if (tag === 'select' || tag === 'option') return;
@@ -1510,6 +1548,30 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+
+    const discountInput = document.getElementById('invoiceDiscount');
+    if (discountInput) {
+        discountInput.addEventListener('input', function () {
+            renderCart();
+        });
+        discountInput.addEventListener('blur', function () {
+            const subtotal = cart.reduce((sum, i) => sum + (i.qty * i.custom_price), 0);
+            const minAllowedTotal = cart.reduce((sum, i) => sum + (i.qty * i.min_selling_price), 0);
+            const maxAllowedDiscount = Math.max(0, subtotal - minAllowedTotal);
+            let discount = parseFloat(this.value);
+
+            if (isNaN(discount) || discount < 0) {
+                this.value = '0';
+                renderCart();
+                return;
+            }
+
+            if (discount > maxAllowedDiscount + 0.01) {
+                showToast('مينفعش: الخصم أكبر من المتاح', 'error');
+                // لا نُعدِّل الخصم تلقائياً؛ نمنع إتمام البيع عند الحفظ فقط.
+            }
+        });
+    }
 });
 
 // ✅ دالة تهيئة البحث عن العملاء
@@ -1735,22 +1797,27 @@ function updateQuantity(index, val) {
 
 function renderCart() {
     let html = '';
-    let total = 0;
+    let subtotal = 0;
+    let minAllowedTotal = 0;
     const cartBody = document.getElementById('cartBody');
     const emptyDiv = document.getElementById('emptyCart');
+    const discountInput = document.getElementById('invoiceDiscount');
+    const discountHint = document.getElementById('discountHint');
 
     if(cart.length === 0) {
         cartBody.innerHTML = '';
         emptyDiv.style.display = 'block';
         document.getElementById('grandTotal').innerText = "0.00 ج.م";
         document.getElementById('itemCount').innerText = "0 أصناف";
+        if (discountHint) discountHint.innerText = '';
         return;
     }
 
     emptyDiv.style.display = 'none';
     cart.forEach((item, index) => {
         let sub = item.qty * item.custom_price;
-        total += sub;
+        subtotal += sub;
+        minAllowedTotal += (item.qty * item.min_selling_price);
         html += `
         <tr class="animate-in">
             <td class="text-end">
@@ -1773,6 +1840,20 @@ function renderCart() {
     });
     
     cartBody.innerHTML = html;
+    let discount = parseFloat(discountInput ? discountInput.value : 0);
+    if (isNaN(discount) || discount < 0) discount = 0;
+
+    let total = subtotal - discount;
+    const minDiscountAllowed = Math.max(0, subtotal - minAllowedTotal);
+    if (discountHint) {
+        discountHint.innerText = `أقصى خصم مسموح: ${minDiscountAllowed.toFixed(2)} ج.م | الحد الأدنى بعد الخصم: ${minAllowedTotal.toFixed(2)} ج.م`;
+        if (discount > minDiscountAllowed + 0.01) {
+            discountHint.className = 'text-danger';
+        } else {
+            discountHint.className = 'text-muted';
+        }
+    }
+
     document.getElementById('grandTotal').innerText = total.toFixed(2) + " ج.م";
     document.getElementById('itemCount').innerText = cart.length + " أصناف";
 }
@@ -1806,11 +1887,23 @@ function processSale() {
         return; 
     }
     
-    const totalVal = cart.reduce((sum, i) => sum + (i.qty * i.custom_price), 0);
+    const subtotalVal = cart.reduce((sum, i) => sum + (i.qty * i.custom_price), 0);
+    const minAllowedTotal = cart.reduce((sum, i) => sum + (i.qty * i.min_selling_price), 0);
+    const discountInput = document.getElementById('invoiceDiscount');
+    let discountVal = parseFloat(discountInput ? discountInput.value : 0) || 0;
+    if (discountVal < 0) discountVal = 0;
+    if (discountVal > subtotalVal) discountVal = subtotalVal;
+    const totalVal = subtotalVal - discountVal;
+    if (totalVal < minAllowedTotal - 0.01) {
+        showToast(`الخصم غير مسموح: إجمالي الفاتورة بعد الخصم أقل من الحد الأدنى (${minAllowedTotal.toFixed(2)} ج.م)`, 'error');
+        return;
+    }
     
     // تجهيز البيانات للإرسال
     let postData = {
         cart: cart,
+        subtotal: subtotalVal,
+        discount: discountVal,
         total: totalVal,
         method: method
     };
@@ -1835,11 +1928,19 @@ function processSale() {
             showToast(res.msg, 'success');
             cart = [];
             renderCart();
-            // إعادة تعيين الحقول
+            // إعادة تهيئة الشاشة كاملة بعد كل عملية بيع ناجحة
+            document.getElementById('invoiceDiscount').value = '0';
+            document.getElementById('paymentMethod').value = 'cash';
+            switchCustomerType('registered');
+            document.getElementById('creditWarning').classList.add('d-none');
             document.getElementById('walkinName').value = 'عميل نقدي';
             document.getElementById('walkinPhone').value = '';
             document.getElementById('customerId').value = '';
             document.getElementById('customerSearch').value = '';
+            const customerSearchResults = document.getElementById('customerSearchResults');
+            if (customerSearchResults) customerSearchResults.style.display = 'none';
+            hideScanPreview();
+            focusProductSearch();
         } else {
             showToast(res.msg, 'error');
         }
@@ -1857,6 +1958,21 @@ window.addEventListener('keydown', e => {
         focusProductSearch();
     }
     if (e.key === 'Enter' && e.ctrlKey) processSale();
+});
+
+document.addEventListener('keydown', function (e) {
+    const target = e.target;
+    if (!target || !target.classList) return;
+    if ((e.key === 'Enter' || e.key === 'Tab') && target.classList.contains('qty-input')) {
+        e.preventDefault();
+        const row = target.closest('tr');
+        if (!row) return;
+        const priceInput = row.querySelector('.price-input');
+        if (priceInput) {
+            priceInput.focus();
+            priceInput.select();
+        }
+    }
 });
 
 document.addEventListener('click', e => {

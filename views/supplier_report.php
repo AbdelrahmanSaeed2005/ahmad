@@ -53,6 +53,76 @@ if (isset($_POST['pay_supplier'])) {
     }
 }
 
+
+// حذف دفعة مورد
+if (isset($_POST['delete_payment'])) {
+    $payment_id = (int)($_POST['payment_id'] ?? 0);
+    try {
+        $pdo->beginTransaction();
+        $st = $pdo->prepare("SELECT * FROM cash_transactions WHERE id = ? AND supplier_id = ? AND related_type = 'supplier_payment' AND type = 'expense' LIMIT 1");
+        $st->execute([$payment_id, $supplier_id]);
+        $old = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$old) throw new Exception('الدفعة غير موجودة');
+
+        $old_amount = (float)$old['amount'];
+        $old_method = $old['payment_method'] ?: 'cash';
+        $pdo->prepare("UPDATE suppliers SET balance = balance + ? WHERE id = ?")->execute([$old_amount, $supplier_id]);
+        if ($old_method !== 'cash') {
+            $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")->execute([$old_amount, $old_method]);
+        }
+        $pdo->prepare("DELETE FROM cash_transactions WHERE id = ?")->execute([$payment_id]);
+
+        $pdo->commit();
+        header("Location: supplier_report.php?id=$supplier_id&msg=payment_deleted"); exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        die("خطأ في حذف الدفعة: " . $e->getMessage());
+    }
+}
+
+// حذف فاتورة مشتريات مورد (مع عكس أثرها المالي والمخزني)
+if (isset($_POST['delete_purchase'])) {
+    $purchase_id = (int)($_POST['purchase_id'] ?? 0);
+    try {
+        $pdo->beginTransaction();
+        $pst = $pdo->prepare("SELECT id, supplier_id, remaining_amount FROM purchases WHERE id = ? AND supplier_id = ? LIMIT 1");
+        $pst->execute([$purchase_id, $supplier_id]);
+        $purchase = $pst->fetch(PDO::FETCH_ASSOC);
+        if (!$purchase) throw new Exception('فاتورة الشراء غير موجودة');
+
+        $items = $pdo->prepare("SELECT product_name, quantity FROM purchase_items WHERE purchase_id = ?");
+        $items->execute([$purchase_id]);
+        foreach (($items->fetchAll(PDO::FETCH_ASSOC) ?: []) as $it) {
+            $pdo->prepare("UPDATE products SET stock_quantity = GREATEST(stock_quantity - ?, 0) WHERE name = ? AND deleted_at IS NULL")
+                ->execute([(float)$it['quantity'], $it['product_name']]);
+        }
+
+        $remaining = (float)($purchase['remaining_amount'] ?? 0);
+        if ($remaining > 0) {
+            $pdo->prepare("UPDATE suppliers SET balance = balance - ? WHERE id = ?")->execute([$remaining, $supplier_id]);
+        }
+
+        $tx = $pdo->prepare("SELECT id, amount, payment_method FROM cash_transactions WHERE related_type = 'supplier_payment' AND related_id = ? AND supplier_id = ? AND type = 'expense'");
+        $tx->execute([$purchase_id, $supplier_id]);
+        foreach (($tx->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
+            if (($row['payment_method'] ?? 'cash') !== 'cash') {
+                $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")
+                    ->execute([(float)$row['amount'], $row['payment_method']]);
+            }
+            $pdo->prepare("DELETE FROM cash_transactions WHERE id = ?")->execute([(int)$row['id']]);
+        }
+
+        $pdo->prepare("DELETE FROM purchase_items WHERE purchase_id = ?")->execute([$purchase_id]);
+        $pdo->prepare("DELETE FROM purchases WHERE id = ?")->execute([$purchase_id]);
+        $pdo->commit();
+        header("Location: supplier_report.php?id=$supplier_id&msg=purchase_deleted"); exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        die("خطأ في حذف فاتورة الشراء: " . $e->getMessage());
+    }
+}
+
+
 // 3. إعدادات الترقيم الصفحي
 $limit = 10;
 $page_purchases = isset($_GET['page_purchases']) ? (int)$_GET['page_purchases'] : 1;
@@ -79,8 +149,13 @@ $purchases_list = [];
 $payments_list = [];
 
 try {
-    $purchases = $pdo->prepare("SELECT 'فاتورة شراء' as type, id, total_amount as amount, created_at, 'invoice' as category 
-                                FROM purchases WHERE supplier_id = ? 
+    $purchases = $pdo->prepare("SELECT 'فاتورة شراء' as type, p.id, p.total_amount as amount, p.paid_amount, p.remaining_amount, p.payment_status,
+                                p.created_at, 'invoice' as category,
+                                (SELECT ct.payment_method 
+                                 FROM cash_transactions ct
+                                 WHERE ct.related_type = 'supplier_payment' AND ct.related_id = p.id AND ct.type = 'expense'
+                                 ORDER BY ct.id DESC LIMIT 1) as payment_method
+                                FROM purchases p WHERE p.supplier_id = ? 
                                 ORDER BY created_at DESC 
                                 LIMIT $limit OFFSET $offset_purchases");
     $purchases->execute([$supplier_id]);
@@ -110,24 +185,7 @@ $total_payments_sum = $total_payments_amount->fetchColumn() ?: 0;
 
 require_once '../includes/header.php'; 
 ?>
-
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes">
-    <title>كشف حساب المورد | <?= htmlspecialchars($supplier['name']) ?></title>
-    
-    <!-- Bootstrap 5 RTL -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
-    
-    <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <style>
+<style>
         /* ===== VARIABLES ===== */
         :root {
             --primary: #4361ee;
@@ -1220,8 +1278,6 @@ require_once '../includes/header.php';
             }
         }
     </style>
-</head>
-<body>
     <!-- Theme Toggle Button -->
     <div class="theme-toggle ripple-effect" id="themeToggle" onclick="toggleTheme()">
         <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
@@ -1291,6 +1347,20 @@ require_once '../includes/header.php';
             <div class="alert alert-success alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
                 <i class="bi bi-check-circle-fill me-2"></i>
                 <div class="flex-grow-1 small">تم تسجيل الدفعة بنجاح وخصمها من حساب المورد</div>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] == 'purchase_deleted'): ?>
+            <div class="alert alert-warning alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
+                <i class="bi bi-trash-fill me-2"></i>
+                <div class="flex-grow-1 small">تم حذف فاتورة الشراء وعكس أثرها المالي والمخزني</div>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] == 'payment_deleted'): ?>
+            <div class="alert alert-warning alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
+                <i class="bi bi-trash-fill me-2"></i>
+                <div class="flex-grow-1 small">تم حذف الدفعة وعكس أثرها بنجاح</div>
                 <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
@@ -1387,6 +1457,12 @@ require_once '../includes/header.php';
                                         <button class="btn-view view-details ripple-effect" data-id="<?= $purchase['id'] ?>" title="عرض التفاصيل">
                                             <i class="bi bi-eye"></i>
                                         </button>
+                                        <form method="POST" class="d-inline" onsubmit="return confirm('تأكيد حذف فاتورة الشراء؟ سيتم عكس المخزون والحسابات.');">
+                                            <input type="hidden" name="purchase_id" value="<?= (int)$purchase['id'] ?>">
+                                            <button type="submit" name="delete_purchase" class="btn btn-sm btn-danger ms-1">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1464,11 +1540,23 @@ require_once '../includes/header.php';
                     <th class="text-center">طريقة الدفع</th>
                     <th class="text-center">ملاحظات</th>
                     <th class="text-center">الحالة</th>
+                    <th class="text-center">إجراء</th>
                 </tr> 
             </thead>
             <tbody>
                 <?php if (!empty($payments_list)): ?>
                     <?php foreach ($payments_list as $payment): ?>
+                        <?php
+                        $payment_notes = '';
+                        if (!empty($payment['description'])) {
+                            $payment_notes = str_replace("تسديد دفعة للمورد: " . $supplier['name'] . " - ", "", $payment['description']);
+                            $payment_notes = str_replace("تسديد دفعة للمورد: ", "", $payment_notes);
+                            $payment_notes = str_replace($supplier['name'] . " - ", "", $payment_notes);
+                        }
+                        if (empty($payment_notes) && isset($payment['notes'])) {
+                            $payment_notes = (string)$payment['notes'];
+                        }
+                        ?>
                         <tr>
                             <td data-label="التاريخ">
                                 <div class="date-cell"><?= date('Y/m/d', strtotime($payment['created_at'])) ?></div>
@@ -1497,26 +1585,10 @@ require_once '../includes/header.php';
                                 </span>
                             </td>
                             <td class="text-center" style="max-width: 200px;">
-                                <?php 
-                                // استخراج الملاحظات من حقل description
-                                $notes = '';
-                                if (!empty($payment['description'])) {
-                                    // إزالة الجزء الثابت من الوصف
-                                    $notes = str_replace("تسديد دفعة للمورد: " . $supplier['name'] . " - ", "", $payment['description']);
-                                    $notes = str_replace("تسديد دفعة للمورد: ", "", $notes);
-                                    $notes = str_replace($supplier['name'] . " - ", "", $notes);
-                                }
-                                
-                                // إذا كان هناك ملاحظات مخزنة في حقل آخر (مثل notes) - اختياري
-                                if (empty($notes) && isset($payment['notes'])) {
-                                    $notes = $payment['notes'];
-                                }
-                                
-                                if (!empty($notes)): 
-                                ?>
+                                <?php if (!empty($payment_notes)): ?>
                                     <span class="badge bg-info bg-opacity-10 text-info p-2" style="font-size: 0.75rem; white-space: normal; word-break: break-word;">
                                         <i class="bi bi-chat-dots me-1"></i>
-                                        <?= htmlspecialchars($notes) ?>
+                                        <?= htmlspecialchars($payment_notes) ?>
                                     </span>
                                 <?php else: ?>
                                     <span class="text-muted small">—</span>
@@ -1525,11 +1597,19 @@ require_once '../includes/header.php';
                             <td class="text-center">
                                 <span class="status-badge payment">سداد</span>
                             </td>
+                            <td class="text-center">
+                                <form method="POST" class="d-inline" onsubmit="return confirm('تأكيد حذف هذه الدفعة؟');">
+                                    <input type="hidden" name="payment_id" value="<?= (int)$payment['id'] ?>">
+                                    <button type="submit" name="delete_payment" class="btn btn-sm btn-danger">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="7" class="text-center py-4">
+                        <td colspan="8" class="text-center py-4">
                             <div class="empty-state">
                                 <i class="bi bi-cash-stack"></i>
                                 <p>لا توجد دفعات نقدية مسجلة</p>
@@ -2302,7 +2382,4 @@ require_once '../includes/header.php';
             }
         }
     </style>
-</body>
-</html>
-
 <?php require_once '../includes/footer.php'; ?>

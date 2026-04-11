@@ -12,6 +12,41 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    // Theme system (light/dark) - shared across all views
+    (function () {
+        const THEME_KEY = 'erp_theme';
+        const html = document.documentElement;
+
+        function setTheme(theme) {
+            const safeTheme = theme === 'dark' ? 'dark' : 'light';
+            html.setAttribute('data-theme', safeTheme);
+            try { localStorage.setItem(THEME_KEY, safeTheme); } catch (e) {}
+            const icon = document.getElementById('themeToggleIcon');
+            if (icon) {
+                icon.className = safeTheme === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+            }
+        }
+
+        function getInitialTheme() {
+            try {
+                const saved = localStorage.getItem(THEME_KEY);
+                if (saved === 'dark' || saved === 'light') return saved;
+            } catch (e) {}
+            return 'light';
+        }
+
+        window.toggleTheme = function () {
+            const current = html.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+            setTheme(current === 'dark' ? 'light' : 'dark');
+        };
+
+        document.addEventListener('DOMContentLoaded', function () {
+            setTheme(getInitialTheme());
+            const btn = document.getElementById('themeToggleBtn');
+            if (btn) btn.addEventListener('click', window.toggleTheme);
+        });
+    })();
+
     // تمييز الرابط الفعال في السايدبار
     document.addEventListener('DOMContentLoaded', function() {
         const currentUrl = window.location.href;

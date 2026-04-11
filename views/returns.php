@@ -22,6 +22,10 @@ if (isset($_GET['action'])) {
             $p_id = $data['product_id'];
             $qty = $data['quantity'];
             $return_price = $data['return_price']; 
+            $payment_method = $data['payment_method'] ?? 'cash';
+            if (!in_array($payment_method, ['cash', 'vodafone', 'bank'], true)) {
+                $payment_method = 'cash';
+            }
             $user_id = $_SESSION['user_id'];
 
             $stmt = $pdo->prepare("SELECT name, cost_price FROM products WHERE id = ?");
@@ -37,7 +41,7 @@ if (isset($_GET['action'])) {
             recordTransaction($pdo, [
                 'direction' => 'out',
                 'amount' => $total_return,
-                'payment_method' => 'cash',
+                'payment_method' => $payment_method,
                 'description' => $desc,
                 'user_id' => (int) $user_id,
                 'related_type' => 'return',
@@ -280,6 +284,14 @@ require_once '../includes/header.php';
                         <input type="number" id="retQty" class="input-modern" value="1" min="1">
                         <small class="text-muted mt-1 d-block">سيتم إضافة هذه الكمية للمخزن</small>
                     </div>
+                    <div class="col-md-12">
+                        <label class="form-label-custom">طريقة رد المبلغ</label>
+                        <select id="retMethod" class="input-modern">
+                            <option value="cash">نقدي</option>
+                            <option value="vodafone">فودافون كاش</option>
+                            <option value="bank">بنكي</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="total-preview mt-4 p-3 rounded-3 bg-light text-center border" id="totalBox">
@@ -354,7 +366,8 @@ function submitReturn() {
     let data = {
         product_id: document.getElementById('p_id').value,
         return_price: document.getElementById('retPrice').value,
-        quantity: document.getElementById('retQty').value
+        quantity: document.getElementById('retQty').value,
+        payment_method: document.getElementById('retMethod').value
     };
 
     if(!data.return_price || data.quantity < 1) {

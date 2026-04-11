@@ -3,7 +3,7 @@ require_once 'auth.php';
 check_login();
 ?>
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,33 +15,60 @@ check_login();
     <style>
         /* ===== ERP MAIN LAYOUT - UI ENHANCEMENTS ===== */
         :root {
-            /* Primary Colors */
-            --primary: #2563eb;
-            --primary-light: #3b82f6;
-            --primary-dark: #1d4ed8;
-            
-            /* Neutral Colors */
-            --gray-50: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --gray-700: #334155;
-            --gray-800: #1e293b;
-            --gray-900: #0f172a;
-            
-            /* Semantic Colors */
+            /* ERP color system (from colors.xml) - light mode */
+            --primary: #4f46e5;
+            --primary-light: #6366f1;
+            --primary-dark: #4338ca;
+            --primary-soft: #e0e7ff;
+            --primary-glow: rgba(79, 70, 229, 0.2);
+            --secondary: #64748b;
             --success: #10b981;
+            --success-light: #d1fae5;
             --danger: #ef4444;
+            --danger-light: #fee2e2;
             --warning: #f59e0b;
+            --warning-light: #fed7aa;
             --info: #3b82f6;
+            --info-light: #dbeafe;
+            --bg-body: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-sidebar: #ffffff;
+            --bg-header: #ffffff;
+            --bg-hover: #f1f5f9;
+            --bg-input: #ffffff;
+            --bg-table-header: #f8fafc;
+            --text-primary: #0f172a;
+            --text-secondary: #334155;
+            --text-muted: #64748b;
+            --border-light: #e2e8f0;
+            --border-medium: #cbd5e1;
+            --border-focus: #4f46e5;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+            --bs-body-bg: var(--bg-body);
+            --bs-body-color: var(--text-primary);
+            --bs-border-color: var(--border-light);
+            --bs-card-bg: var(--bg-card);
+            --bs-secondary-color: var(--text-muted);
+            --bs-tertiary-bg: var(--bg-hover);
+            --bs-primary: var(--primary);
+            --bs-success: var(--success);
+            --bs-danger: var(--danger);
+            --bs-warning: var(--warning);
+            --bs-info: var(--info);
             
-            /* Shadows */
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.02);
-            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.02);
-            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.02);
+            /* Legacy aliases used across views */
+            --gray-50: var(--bg-body);
+            --gray-100: var(--bg-hover);
+            --gray-200: var(--border-light);
+            --gray-300: var(--border-medium);
+            --gray-400: #94a3b8;
+            --gray-500: var(--text-muted);
+            --gray-600: #475569;
+            --gray-700: var(--text-secondary);
+            --gray-800: #1e293b;
+            --gray-900: var(--text-primary);
             
             /* Spacing */
             --space-1: 0.25rem;
@@ -59,19 +86,56 @@ check_login();
             --transition-base: 0.2s ease;
             --transition-slow: 0.3s ease;
         }
+        
+        [data-theme="dark"] {
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --primary-soft: #1e293b;
+            --primary-glow: rgba(99, 102, 241, 0.2);
+            --secondary: #94a3b8;
+            --success: #34d399;
+            --success-light: #064e3b;
+            --danger: #f87171;
+            --danger-light: #7f1d1d;
+            --warning: #fbbf24;
+            --warning-light: #78350f;
+            --info: #60a5fa;
+            --info-light: #1e3a8a;
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --bg-sidebar: #1e293b;
+            --bg-header: #1e293b;
+            --bg-hover: #2d3a4f;
+            --bg-input: #1e293b;
+            --bg-table-header: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --border-light: #334155;
+            --border-medium: #475569;
+            --border-focus: #6366f1;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6);
+            --gray-600: #94a3b8;
+            --gray-800: #cbd5e1;
+        }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            transition: background-color var(--transition-base), color var(--transition-base), border-color var(--transition-base);
         }
 
         body {
             font-family: 'Cairo', sans-serif;
-            background-color: var(--gray-100);
-            color: var(--gray-900);
+            background-color: var(--bg-body);
+            color: var(--text-primary);
             line-height: 1.5;
             overflow-x: hidden;
+            transition: background-color var(--transition-base), color var(--transition-base);
         }
 
         /* ===== SIDEBAR STYLES ===== */
@@ -81,7 +145,7 @@ check_login();
             position: fixed;
             top: 0;
             right: 0;
-            background: white;
+            background: var(--bg-sidebar);
             border-left: 1px solid var(--gray-200);
             box-shadow: var(--shadow-lg);
             z-index: 1000;
@@ -93,7 +157,7 @@ check_login();
         .sidebar-header {
             padding: var(--space-6) var(--space-4);
             border-bottom: 1px solid var(--gray-200);
-            background: white;
+            background: var(--bg-sidebar);
             position: sticky;
             top: 0;
             z-index: 10;
@@ -266,7 +330,7 @@ check_login();
 
         /* ===== TOP NAVBAR ===== */
         .navbar-top {
-            background: white;
+            background: var(--bg-header);
             border-radius: 16px;
             padding: var(--space-4) var(--space-6);
             margin-bottom: var(--space-6);
@@ -312,7 +376,7 @@ check_login();
         }
 
         .toast {
-            background: white;
+            background: var(--bg-card);
             border-radius: 12px;
             box-shadow: var(--shadow-lg);
             border: 1px solid var(--gray-200);
@@ -405,7 +469,7 @@ check_login();
 
         /* ===== UTILITY CLASSES ===== */
         .card {
-            background: white;
+            background: var(--bg-card);
             border-radius: 16px;
             border: 1px solid var(--gray-200);
             box-shadow: var(--shadow-sm);
@@ -436,14 +500,14 @@ check_login();
 
         .table {
             width: 100%;
-            background: white;
+            background: var(--bg-card);
             border-collapse: separate;
             border-spacing: 0;
             min-width: 600px;
         }
 
         .table th {
-            background: var(--gray-50);
+            background: var(--bg-table-header);
             color: var(--gray-600);
             font-weight: 600;
             font-size: 0.9rem;
@@ -480,7 +544,7 @@ check_login();
 
         .form-control:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+            box-shadow: 0 0 0 4px var(--primary-glow);
             outline: none;
         }
 
@@ -542,18 +606,38 @@ check_login();
         }
 
         .badge-success {
-            background: #d1fae5;
-            color: #065f46;
+            background: var(--success-light);
+            color: var(--success);
         }
 
         .badge-danger {
-            background: #fee2e2;
-            color: #991b1b;
+            background: var(--danger-light);
+            color: var(--danger);
         }
 
         .badge-warning {
-            background: #fed7aa;
-            color: #92400e;
+            background: var(--warning-light);
+            color: var(--warning);
+        }
+
+        .theme-toggle-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            border: 1px solid var(--border-light);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .theme-toggle-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: var(--bg-hover);
         }
 
         /* Grid System */
@@ -631,6 +715,9 @@ check_login();
                 <a href="dashboard.php" class="navbar-brand mb-0">ERP SYSTEM V2</a>
             </div>
             <div class="user-info">
+                <button type="button" class="theme-toggle-btn" id="themeToggleBtn" title="تبديل الوضع" aria-label="تبديل الوضع">
+                    <i class="bi bi-moon-stars" id="themeToggleIcon"></i>
+                </button>
                 <span class="user-name">مرحباً: <?= htmlspecialchars($_SESSION['username']) ?></span>
                 <span class="user-badge"><?= htmlspecialchars($_SESSION['role_name']) ?></span>
             </div>

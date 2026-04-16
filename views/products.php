@@ -395,9 +395,6 @@ a.filter-btn:hover {
         </div>
         
         <div class="d-flex gap-3 align-items-center">
-            <div class="theme-toggle" onclick="toggleTheme()" id="themeSwitcher">
-                <i class="bi bi-moon-stars"></i>
-            </div>
             <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm" data-bs-toggle="modal" data-bs-target="#productModal">
                 <i class="bi bi-plus-circle-fill me-2"></i> إضافة صنف جديد
             </button>

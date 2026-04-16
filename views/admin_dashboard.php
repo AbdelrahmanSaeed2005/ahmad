@@ -216,9 +216,6 @@ require_once '../includes/header.php';
             <h2 class="h4 fw-bold mb-0 text-dark"><i class="bi bi-speedometer2 text-primary"></i> لوحة الإدارة</h2>
             <div class="text-muted small">آخر تصفية: <span class="badge bg-secondary opacity-75"><?= $last_withdraw ?: 'لا يوجد' ?></span></div>
         </div>
-        <button onclick="toggleTheme()" class="theme-toggle shadow-sm">
-            <i id="theme-icon" class="bi bi-moon-stars"></i> <span class="d-none d-md-inline ms-2">تبديل الوضع</span>
-        </button>
     </div>
 
     <?php

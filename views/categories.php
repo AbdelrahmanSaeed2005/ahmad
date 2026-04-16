@@ -278,9 +278,6 @@ require_once '../includes/header.php';
     </div>
 </div>
 
-<button class="theme-toggle shadow-lg" onclick="toggleTheme()" title="تبديل الوضع">
-    <i class="bi bi-moon-stars-fill" id="theme-icon"></i>
-</button>
 
 <script>
     // 💾 Theme Logic (Save in LocalStorage)

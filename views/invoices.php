@@ -398,9 +398,7 @@ require_once '../includes/header.php';
     <?php endif; ?>
 </div>
 
-<button class="theme-switch shadow-lg" onclick="toggleTheme()" id="themeBtn">
-    <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
-</button>
+
 
 <div class="modal fade" id="detailsModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-centered">

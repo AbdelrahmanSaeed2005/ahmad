@@ -1139,9 +1139,6 @@ require_once '../includes/header.php';
     </div>
 </div>
 
-<div class="theme-switch" onclick="toggleTheme()" title="تبديل الوضع">
-    <i id="themeIcon" class="bi bi-moon-stars-fill"></i>
-</div>
 
 <div class="toast-container position-fixed bottom-0 start-0 p-4"></div>
 

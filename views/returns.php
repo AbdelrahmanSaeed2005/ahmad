@@ -310,9 +310,6 @@ require_once '../includes/header.php';
     </div>
 </div>
 
-<button class="theme-toggle" onclick="toggleTheme()">
-    <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
-</button>
 
 <script>
 // --- المنطق البرمجي (تم الحفاظ عليه بالكامل مع تحسينات بسيطة للـ UI) ---

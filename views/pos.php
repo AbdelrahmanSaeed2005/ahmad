@@ -13,6 +13,22 @@ try {
     // تجاهل الخطأ لتفادي تعطيل الشاشة إذا كانت صلاحيات ALTER غير متاحة
 }
 
+// اختيار عمود هاتف العملاء المتاح فعلياً في قاعدة البيانات
+$customerPhoneSelect = "''";
+try {
+    $hasPhoneNumber = (bool)$pdo->query("SHOW COLUMNS FROM customers LIKE 'phone_number'")->fetch();
+    $hasPhone = (bool)$pdo->query("SHOW COLUMNS FROM customers LIKE 'phone'")->fetch();
+    if ($hasPhoneNumber && $hasPhone) {
+        $customerPhoneSelect = "COALESCE(NULLIF(phone_number, ''), phone)";
+    } elseif ($hasPhoneNumber) {
+        $customerPhoneSelect = "phone_number";
+    } elseif ($hasPhone) {
+        $customerPhoneSelect = "phone";
+    }
+} catch (Throwable $e) {
+    $customerPhoneSelect = "''";
+}
+
 // --- 1. معالجة طلبات AJAX ---
 if (isset($_GET['action'])) {
     header('Content-Type: application/json');
@@ -81,8 +97,8 @@ if (isset($_GET['action'])) {
     if ($_GET['action'] === 'search_customers') {
         $q = $_GET['q'] ?? '';
         if (strlen($q) < 1) { echo json_encode([]); exit; }
-        $stmt = $pdo->prepare("SELECT id, name, phone_number FROM customers 
-                               WHERE (name LIKE ? OR phone_number LIKE ?) 
+        $stmt = $pdo->prepare("SELECT id, name, {$customerPhoneSelect} AS phone_number FROM customers 
+                               WHERE (name LIKE ? OR {$customerPhoneSelect} LIKE ?) 
                                AND deleted_at IS NULL ORDER BY name LIMIT 20");
         $searchQuery = "%$q%";
         $stmt->execute([$searchQuery, $searchQuery]);
@@ -185,7 +201,7 @@ if (isset($_GET['action'])) {
         exit;
     }
 }
-$customers = $pdo->query("SELECT id, name, phone_number FROM customers WHERE deleted_at IS NULL ORDER BY name")->fetchAll();
+$customers = $pdo->query("SELECT id, name, {$customerPhoneSelect} AS phone_number FROM customers WHERE deleted_at IS NULL ORDER BY name")->fetchAll();
 require_once '../includes/header.php'; 
 ?>
 
@@ -1527,24 +1543,64 @@ document.addEventListener('DOMContentLoaded', () => {
         focusProductSearch();
     });
 
-    /* سكانر USB (لوحة مفاتيح): توجيه الأحرف إلى حقل الباركود تلقائياً */
-    initUsbBarcodeScannerRouting();
+/* سكانر USB: Global capture with buffer for fast scanner */
+let barcodeBuffer = '';
+let scannerTimeout;
+
+function initScannerListener() {
+    document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+        if (isCameraScanModalOpen()) return;
+
+        const active = document.activeElement;
+        const tag = active ? active.tagName.toLowerCase() : '';
+        const id = active ? active.id : '';
+
+        // Skip if in qty/price or customer fields
+        if (tag === 'input' && (active.classList.contains('qty-input') || active.classList.contains('price-input') || id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone' || id === 'invoiceDiscount')) return;
+        if (tag === 'select' || tag === 'textarea' || active.isContentEditable) return;
+
+        const key = e.key;
+
+        if (key.length === 1 && key >= '0' && key <= '9') {
+            barcodeBuffer += key;
+            clearTimeout(scannerTimeout);
+            scannerTimeout = setTimeout(() => {
+                if (barcodeBuffer.length >= 3) {
+                    lookupBarcodeAndAdd(barcodeBuffer);
+                }
+                barcodeBuffer = '';
+            }, 50);  // Scanner typical delay
+            e.preventDefault();
+            e.stopPropagation();
+        } else if (key === 'Enter') {
+            if (barcodeBuffer.length >= 3) {
+                lookupBarcodeAndAdd(barcodeBuffer);
+            }
+            barcodeBuffer = '';
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    }, true);
+}
+initScannerListener();
 
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden && cart.length) refreshCartStockFromServer();
     });
 
     const productSearchEl = document.getElementById('productSearch');
-    productSearchEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const q = this.value.trim();
-            document.getElementById('searchResults').style.display = 'none';
-            if (q.length >= 1) {
-                lookupBarcodeAndAdd(q);
-            }
-        }
-    });
+productSearchEl.addEventListener('input', function() {
+    this.value = '';
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+});
+productSearchEl.addEventListener('keydown', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+});
 
     const discountInput = document.getElementById('invoiceDiscount');
     if (discountInput) {
@@ -1578,39 +1634,96 @@ function initCustomerSearch() {
     const customerSelect = document.getElementById('customerId');
     
     if (!searchInput) return;
+
+    function safeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function renderResults(list) {
+        if (!Array.isArray(list) || list.length === 0) {
+            searchResults.innerHTML = '<div class="customer-search-item text-muted">لا توجد نتائج</div>';
+            searchResults.style.display = 'block';
+            return;
+        }
+        let html = '';
+        list.forEach(customer => {
+            const id = Number(customer.id || 0);
+            const name = safeHtml(customer.name || '');
+            const phone = safeHtml(customer.phone_number || '');
+            html += `
+                <div class="customer-search-item" data-id="${id}" data-name="${name}" data-phone="${phone}">
+                    <strong>${name}</strong>
+                    ${phone ? `<small>📞 ${phone}</small>` : ''}
+                </div>
+            `;
+        });
+        searchResults.innerHTML = html;
+        searchResults.style.display = 'block';
+    }
+
+    function getCustomersFromSelect() {
+        const list = [];
+        for (let i = 0; i < customerSelect.options.length; i++) {
+            const opt = customerSelect.options[i];
+            if (!opt.value) continue;
+            list.push({
+                id: opt.value,
+                name: (opt.textContent || '').split(' - ')[0].trim(),
+                phone_number: opt.getAttribute('data-phone') || ''
+            });
+        }
+        return list;
+    }
+
+    function filterLocalCustomers(query) {
+        const q = String(query || '').trim().toLowerCase();
+        const all = getCustomersFromSelect();
+        if (!q) return all.slice(0, 20);
+        return all.filter(c => {
+            const n = String(c.name || '').toLowerCase();
+            const p = String(c.phone_number || '').toLowerCase();
+            return n.includes(q) || p.includes(q);
+        }).slice(0, 20);
+    }
     
     let searchTimeout;
     
+    // اظهار قائمة العملاء المسجلين فور التركيز على الحقل
+    searchInput.addEventListener('focus', function() {
+        renderResults(filterLocalCustomers(''));
+    });
+
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimeout);
         const query = this.value.trim();
-        
-        if (query.length < 1) {
-            searchResults.style.display = 'none';
-            return;
-        }
-        
+
+        // فلترة محلية فورية من قائمة العملاء المسجلين
+        renderResults(filterLocalCustomers(query));
+
+        // تحديث من السيرفر كخطوة ثانية (اختياري/للتزامن)
         searchTimeout = setTimeout(() => {
             fetch(`pos.php?action=search_customers&q=${encodeURIComponent(query)}`)
                 .then(res => res.json())
                 .then(data => {
-                    if (data.length === 0) {
-                        searchResults.innerHTML = '<div class="customer-search-item text-muted">لا توجد نتائج</div>';
-                    } else {
-                        let html = '';
-                        data.forEach(customer => {
-                            html += `
-                                <div class="customer-search-item" onclick="selectCustomer(${customer.id}, '${customer.name.replace(/'/g, "\\'")}', '${customer.phone_number || ''}')">
-                                    <strong>${customer.name}</strong>
-                                    ${customer.phone_number ? `<small>📞 ${customer.phone_number}</small>` : ''}
-                                </div>
-                            `;
-                        });
-                        searchResults.innerHTML = html;
+                    if (Array.isArray(data) && data.length > 0) {
+                        renderResults(data);
                     }
-                    searchResults.style.display = 'block';
+                })
+                .catch(() => {
+                    // تجاهل الخطأ - الفلترة المحلية بالفعل معروضة
                 });
         }, 300);
+    });
+
+    searchResults.addEventListener('click', function(e) {
+        const item = e.target.closest('.customer-search-item[data-id]');
+        if (!item) return;
+        selectCustomer(item.dataset.id, item.dataset.name, item.dataset.phone);
     });
     
     document.addEventListener('click', function(e) {

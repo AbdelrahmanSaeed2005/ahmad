@@ -8,6 +8,12 @@ if (($_SESSION['role_name'] ?? '') !== 'admin') {
     die("عذراً، لا تمتلك صلاحية الوصول.");
 }
 
+try { $pdo->exec("ALTER TABLE assets ADD COLUMN asset_code VARCHAR(50) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE assets ADD COLUMN useful_life_years DECIMAL(10,2) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE assets ADD COLUMN depreciation_rate DECIMAL(10,2) NULL"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE assets ADD COLUMN residual_value DECIMAL(10,2) NULL DEFAULT 0"); } catch (Throwable $e) {}
+try { $pdo->exec("ALTER TABLE assets ADD COLUMN asset_status VARCHAR(30) NULL DEFAULT 'active'"); } catch (Throwable $e) {}
+
 // ============================================
 // دوال المنطق المالي
 // ============================================
@@ -110,14 +116,24 @@ $error = null;
 // إضافة أصل جديد
 if (isset($_POST['add_asset'])) {
     $name = $_POST['asset_name'];
+    $asset_code = trim((string)($_POST['asset_code'] ?? ''));
     $category = $_POST['category'];
     $initial_value = (float)$_POST['initial_value'];
-    $current_value = (float)$_POST['current_value'];
+    $useful_life = (float)($_POST['useful_life_years'] ?? 0);
+    $depreciation_rate = (float)($_POST['depreciation_rate'] ?? 0);
+    $residual_value = max(0, (float)($_POST['residual_value'] ?? 0));
+    $asset_status = (string)($_POST['asset_status'] ?? 'active');
+    if ($depreciation_rate <= 0 && $useful_life > 0) {
+        $depreciation_rate = 100 / $useful_life;
+    }
+    $annual_depr = ($initial_value - $residual_value) * ($depreciation_rate / 100);
+    $monthly_depr = $annual_depr / 12;
+    $current_value = max($residual_value, $initial_value - $monthly_depr);
     $purchase_date = $_POST['purchase_date'];
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO assets (asset_name, category, initial_value, current_value, purchase_date) VALUES (?, ?, ?, ?, ?)");
-        $stmt->execute([$name, $category, $initial_value, $current_value, $purchase_date]);
+        $stmt = $pdo->prepare("INSERT INTO assets (asset_name, asset_code, category, initial_value, current_value, purchase_date, useful_life_years, depreciation_rate, residual_value, asset_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$name, $asset_code, $category, $initial_value, $current_value, $purchase_date, $useful_life, $depreciation_rate, $residual_value, $asset_status]);
         $message = "✅ تم إضافة الأصل بنجاح";
     } catch (Exception $e) {
         $error = "❌ خطأ: " . $e->getMessage();
@@ -200,7 +216,7 @@ $transactions = $pdo->query("
 // حساب إجمالي الأصول والقيم
 $total_assets_value = $pdo->query("SELECT SUM(current_value) FROM assets")->fetchColumn() ?: 0;
 $total_partners_balance = $pdo->query("SELECT SUM(current_balance) FROM partners")->fetchColumn() ?: 0;
-$total_company_value = $total_assets_value + $total_partners_balance;
+$total_company_value = $total_assets_value; // الأصول مستقلة عن باقي الحسابات
 
 require_once '../includes/header.php';
 ?>
@@ -657,10 +673,13 @@ require_once '../includes/header.php';
                         <thead>
                             <tr>
                                 <th>#</th>
+                                <th>كود الأصل</th>
                                 <th>اسم الأصل</th>
                                 <th>النوع</th>
                                 <th>قيمة الشراء</th>
                                 <th>القيمة الحالية</th>
+                                <th>الإهلاك</th>
+                                <th>الحالة</th>
                                 <th>تاريخ الشراء</th>
                                 <th>الإجراءات</th>
                             </tr>
@@ -670,6 +689,7 @@ require_once '../includes/header.php';
                                 <?php foreach ($assets as $index => $asset): ?>
                                     <tr>
                                         <td><?= $index + 1 ?></td>
+                                        <td><span class="badge bg-light text-dark"><?= htmlspecialchars($asset['asset_code'] ?: ('AST-' . $asset['id'])) ?></span></td>
                                         <td><?= htmlspecialchars($asset['asset_name']) ?></td>
                                         <td>
                                             <span class="<?= $asset['category'] == 'fixed' ? 'badge-fixed' : 'badge-current' ?>">
@@ -678,6 +698,19 @@ require_once '../includes/header.php';
                                         </td>
                                         <td><?= number_format($asset['initial_value'], 2) ?> ج.م</td>
                                         <td><?= number_format($asset['current_value'], 2) ?> ج.م</td>
+                                        <td>
+                                            <?php
+                                            $depr = (float)($asset['depreciation_rate'] ?? 0);
+                                            $resv = (float)($asset['residual_value'] ?? 0);
+                                            ?>
+                                            <small class="text-muted d-block">نسبة: <?= number_format($depr, 2) ?>%</small>
+                                            <small class="text-muted d-block">تخريد: <?= number_format($resv, 2) ?></small>
+                                        </td>
+                                        <td>
+                                            <span class="badge <?= (($asset['asset_status'] ?? 'active') === 'active') ? 'bg-success' : 'bg-secondary' ?>">
+                                                <?= (($asset['asset_status'] ?? 'active') === 'active') ? 'نشط' : 'متوقف' ?>
+                                            </span>
+                                        </td>
                                         <td><?= date('Y-m-d', strtotime($asset['purchase_date'])) ?> </td>
                                         <td>
                                             <a href="?delete_asset=<?= $asset['id'] ?>" class="btn-danger-custom" onclick="return confirm('هل أنت متأكد من حذف هذا الأصل؟')">
@@ -688,7 +721,7 @@ require_once '../includes/header.php';
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7" class="text-center py-4 text-muted">
+                                    <td colspan="10" class="text-center py-4 text-muted">
                                         <i class="bi bi-box fs-1 d-block mb-2 opacity-50"></i>
                                         لا توجد أصول مضافة
                                     </td>
@@ -911,6 +944,10 @@ require_once '../includes/header.php';
                         <input type="text" name="asset_name" class="form-control" required>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label">كود الأصل</label>
+                        <input type="text" name="asset_code" class="form-control" placeholder="مثال: AST-1001">
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">نوع الأصل</label>
                         <select name="category" class="form-select">
                             <option value="fixed">ثابت (مباني - أجهزة - مكاتب)</option>
@@ -926,6 +963,25 @@ require_once '../includes/header.php';
                             <label class="form-label">القيمة الحالية</label>
                             <input type="number" step="0.01" name="current_value" class="form-control" required>
                         </div>
+                    </div>
+                    <div class="mb-3 mt-3">
+                        <label class="form-label">العمر الإنتاجي (بالسنوات)</label>
+                        <input type="number" step="0.01" name="useful_life_years" class="form-control" placeholder="مثال: 5">
+                    </div>
+                    <div class="mb-3 mt-3">
+                        <label class="form-label">نسبة الإهلاك السنوية (%)</label>
+                        <input type="number" step="0.01" name="depreciation_rate" class="form-control" placeholder="يحسب تلقائي إذا ترك فارغًا">
+                    </div>
+                    <div class="mb-3 mt-3">
+                        <label class="form-label">قيمة التخريد</label>
+                        <input type="number" step="0.01" name="residual_value" class="form-control" value="0">
+                    </div>
+                    <div class="mb-3 mt-3">
+                        <label class="form-label">حالة الأصل</label>
+                        <select name="asset_status" class="form-select">
+                            <option value="active">نشط</option>
+                            <option value="inactive">متوقف</option>
+                        </select>
                     </div>
                     <div class="mb-3 mt-3">
                         <label class="form-label">تاريخ الشراء</label>

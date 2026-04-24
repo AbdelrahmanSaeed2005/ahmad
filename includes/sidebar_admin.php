@@ -81,6 +81,12 @@
             </a>
         </li>
         <li class="nav-item">
+            <a class="nav-link" href="Assets.php">
+                <i class="bi bi-building"></i>
+                <span>إدارة الأصول</span>
+            </a>
+        </li>
+        <li class="nav-item">
             <a class="nav-link" href="withdrawals.php">
                 <i class="bi bi-cash-coin"></i>
                 <span>سحب الأرباح</span>

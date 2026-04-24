@@ -563,7 +563,6 @@ require_once '../includes/header.php';
     </div>
 </div>
 
-<button class="theme-switch-btn" onclick="toggleLocalTheme()"><i class="bi bi-moon-stars"></i></button>
 
 <script>
 let rowIdx = 1;

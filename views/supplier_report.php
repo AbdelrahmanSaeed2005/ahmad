@@ -17,6 +17,28 @@ if (!$supplier) {
     die("المورد غير موجود أو تم حذفه.");
 }
 
+if (isset($_GET['action']) && $_GET['action'] === 'purchase_items') {
+    header('Content-Type: application/json; charset=utf-8');
+    $purchase_id = (int)($_GET['purchase_id'] ?? 0);
+    $itemsStmt = $pdo->prepare("
+        SELECT pi.id, pi.product_name, pi.quantity, pi.purchase_price
+        FROM purchase_items pi
+        JOIN purchases p ON p.id = pi.purchase_id
+        WHERE pi.purchase_id = ? AND p.supplier_id = ?
+    ");
+    $itemsStmt->execute([$purchase_id, $supplier_id]);
+    $rows = $itemsStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($rows as &$r) {
+        $retStmt = $pdo->prepare("SELECT COALESCE(SUM(quantity),0) FROM supplier_returns WHERE purchase_item_id = ? AND deleted_at IS NULL");
+        $retStmt->execute([(int)$r['id']]);
+        $retQty = (float)$retStmt->fetchColumn();
+        $r['available_qty'] = max(0, (float)$r['quantity'] - $retQty);
+    }
+    unset($r);
+    echo json_encode(['success' => true, 'items' => $rows], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // 2. معالجة دفع مبلغ للمورد
 if (isset($_POST['pay_supplier'])) {
     $amount = $_POST['amount'];
@@ -122,6 +144,162 @@ if (isset($_POST['delete_purchase'])) {
     }
 }
 
+// مرتجع جزئي من فاتورة مشتريات (عكس مخزني + محاسبي)
+if (isset($_POST['process_supplier_return'])) {
+    $purchase_id = (int)($_POST['purchase_id'] ?? 0);
+    $purchase_item_id = (int)($_POST['purchase_item_id'] ?? 0);
+    $qty = (float)($_POST['return_qty'] ?? 0);
+    $settlement_method = (string)($_POST['settlement_method'] ?? 'adjust_balance');
+    $notes = trim((string)($_POST['return_notes'] ?? ''));
+    $user_id = (int)($_SESSION['user_id'] ?? 0);
+
+    if ($purchase_id <= 0 || $purchase_item_id <= 0 || $qty <= 0 || $user_id <= 0) {
+        header("Location: supplier_report.php?id=$supplier_id&msg=return_error"); exit();
+    }
+
+    $allowed_methods = ['adjust_balance', 'cash', 'vodafone', 'bank'];
+    if (!in_array($settlement_method, $allowed_methods, true)) {
+        $settlement_method = 'adjust_balance';
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $pst = $pdo->prepare("SELECT id, supplier_id, total_amount, paid_amount, remaining_amount FROM purchases WHERE id = ? AND supplier_id = ? LIMIT 1");
+        $pst->execute([$purchase_id, $supplier_id]);
+        $purchase = $pst->fetch(PDO::FETCH_ASSOC);
+        if (!$purchase) {
+            throw new Exception('فاتورة الشراء غير موجودة');
+        }
+
+        $it = $pdo->prepare("SELECT id, product_name, quantity, purchase_price FROM purchase_items WHERE id = ? AND purchase_id = ? LIMIT 1");
+        $it->execute([$purchase_item_id, $purchase_id]);
+        $item = $it->fetch(PDO::FETCH_ASSOC);
+        if (!$item) {
+            throw new Exception('بند الفاتورة غير موجود');
+        }
+
+        $retQtyStmt = $pdo->prepare("SELECT COALESCE(SUM(quantity),0) FROM supplier_returns WHERE purchase_item_id = ? AND deleted_at IS NULL");
+        $retQtyStmt->execute([$purchase_item_id]);
+        $alreadyReturned = (float)$retQtyStmt->fetchColumn();
+        $availableQty = (float)$item['quantity'] - $alreadyReturned;
+        if ($qty > $availableQty + 0.0001) {
+            throw new Exception('الكمية المرتجعة أكبر من المتاح');
+        }
+
+        $unitPrice = (float)$item['purchase_price'];
+        $returnAmount = $qty * $unitPrice;
+
+        $pdo->prepare("UPDATE products SET stock_quantity = GREATEST(stock_quantity - ?, 0) WHERE name = ? AND deleted_at IS NULL")
+            ->execute([$qty, $item['product_name']]);
+
+        $oldTotal = (float)$purchase['total_amount'];
+        $oldPaid = (float)$purchase['paid_amount'];
+        $oldRemaining = (float)$purchase['remaining_amount'];
+
+        $newTotal = max(0, $oldTotal - $returnAmount);
+        $newPaid = min($oldPaid, $newTotal);
+        $newRemaining = max(0, $newTotal - $newPaid);
+        $newStatus = ($newRemaining <= 0) ? 'paid' : (($newPaid > 0) ? 'partial' : 'pending');
+
+        $pdo->prepare("UPDATE purchases SET total_amount = ?, paid_amount = ?, remaining_amount = ?, payment_status = ? WHERE id = ?")
+            ->execute([$newTotal, $newPaid, $newRemaining, $newStatus, $purchase_id]);
+
+        $debtReduction = max(0, $oldRemaining - $newRemaining);
+        if ($debtReduction > 0) {
+            $pdo->prepare("UPDATE suppliers SET balance = balance - ? WHERE id = ?")->execute([$debtReduction, $supplier_id]);
+        }
+
+        $refundAmount = max(0, $oldPaid - $newPaid);
+        $cashTxId = null;
+        if ($refundAmount > 0 && $settlement_method !== 'adjust_balance') {
+            $desc = "مرتجع مشتريات من فاتورة #{$purchase_id} - {$item['product_name']} (كمية: {$qty})";
+            $cashTxId = recordTransaction($pdo, [
+                'direction' => 'in',
+                'amount' => $refundAmount,
+                'payment_method' => $settlement_method,
+                'description' => $desc,
+                'user_id' => $user_id,
+                'related_type' => 'supplier_return',
+                'related_id' => $purchase_id,
+                'supplier_id' => $supplier_id,
+            ]);
+            if ($settlement_method !== 'cash') {
+                $pdo->prepare("UPDATE wallets SET balance = balance + ? WHERE wallet_name = ?")
+                    ->execute([$refundAmount, $settlement_method]);
+            }
+        }
+
+        $pdo->prepare("
+            INSERT INTO supplier_returns
+            (supplier_id, purchase_id, purchase_item_id, product_name, quantity, unit_price, total_amount, settlement_method, cash_transaction_id, notes, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $supplier_id, $purchase_id, $purchase_item_id, $item['product_name'], $qty, $unitPrice, $returnAmount, $settlement_method, $cashTxId, $notes, $user_id
+        ]);
+
+        $pdo->commit();
+        header("Location: supplier_report.php?id=$supplier_id&msg=supplier_returned"); exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        header("Location: supplier_report.php?id=$supplier_id&msg=return_error"); exit();
+    }
+}
+
+if (isset($_POST['delete_supplier_return'])) {
+    $return_id = (int)($_POST['return_id'] ?? 0);
+    try {
+        $pdo->beginTransaction();
+        $st = $pdo->prepare("SELECT * FROM supplier_returns WHERE id = ? AND supplier_id = ? AND deleted_at IS NULL LIMIT 1");
+        $st->execute([$return_id, $supplier_id]);
+        $ret = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$ret) throw new Exception('المرتجع غير موجود');
+
+        $pst = $pdo->prepare("SELECT id, total_amount, paid_amount, remaining_amount FROM purchases WHERE id = ? AND supplier_id = ? LIMIT 1");
+        $pst->execute([(int)$ret['purchase_id'], $supplier_id]);
+        $purchase = $pst->fetch(PDO::FETCH_ASSOC);
+        if (!$purchase) throw new Exception('الفاتورة غير موجودة');
+
+        $qty = (float)$ret['quantity'];
+        $retAmount = (float)$ret['total_amount'];
+        $oldTotal = (float)$purchase['total_amount'];
+        $oldPaid = (float)$purchase['paid_amount'];
+        $oldRemaining = (float)$purchase['remaining_amount'];
+
+        $pdo->prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE name = ? AND deleted_at IS NULL")
+            ->execute([$qty, $ret['product_name']]);
+
+        $newTotal = $oldTotal + $retAmount;
+        $newRemaining = max(0, $newTotal - $oldPaid);
+        $newStatus = ($newRemaining <= 0) ? 'paid' : (($oldPaid > 0) ? 'partial' : 'pending');
+        $pdo->prepare("UPDATE purchases SET total_amount = ?, remaining_amount = ?, payment_status = ? WHERE id = ?")
+            ->execute([$newTotal, $newRemaining, $newStatus, (int)$ret['purchase_id']]);
+
+        $debtIncrease = max(0, $newRemaining - $oldRemaining);
+        if ($debtIncrease > 0) {
+            $pdo->prepare("UPDATE suppliers SET balance = balance + ? WHERE id = ?")->execute([$debtIncrease, $supplier_id]);
+        }
+
+        if (!empty($ret['cash_transaction_id'])) {
+            $tx = $pdo->prepare("SELECT payment_method, amount FROM cash_transactions WHERE id = ? LIMIT 1");
+            $tx->execute([(int)$ret['cash_transaction_id']]);
+            $cashTx = $tx->fetch(PDO::FETCH_ASSOC);
+            if ($cashTx && ($cashTx['payment_method'] ?? 'cash') !== 'cash') {
+                $pdo->prepare("UPDATE wallets SET balance = balance - ? WHERE wallet_name = ?")
+                    ->execute([(float)$cashTx['amount'], $cashTx['payment_method']]);
+            }
+            $pdo->prepare("DELETE FROM cash_transactions WHERE id = ?")->execute([(int)$ret['cash_transaction_id']]);
+        }
+
+        $pdo->prepare("UPDATE supplier_returns SET deleted_at = NOW() WHERE id = ?")->execute([$return_id]);
+        $pdo->commit();
+        header("Location: supplier_report.php?id=$supplier_id&msg=supplier_return_deleted"); exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        header("Location: supplier_report.php?id=$supplier_id&msg=return_error"); exit();
+    }
+}
+
 
 // 3. إعدادات الترقيم الصفحي
 $limit = 10;
@@ -182,6 +360,16 @@ $total_purchases_sum = $total_purchases_amount->fetchColumn() ?: 0;
 $total_payments_amount = $pdo->prepare("SELECT SUM(amount) FROM cash_transactions WHERE supplier_id = ? AND related_type = 'supplier_payment'");
 $total_payments_amount->execute([$supplier_id]);
 $total_payments_sum = $total_payments_amount->fetchColumn() ?: 0;
+
+$supplier_returns_list = $pdo->prepare("
+    SELECT id, purchase_id, product_name, quantity, unit_price, total_amount, settlement_method, created_at
+    FROM supplier_returns
+    WHERE supplier_id = ? AND deleted_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 20
+");
+$supplier_returns_list->execute([$supplier_id]);
+$returns_rows = $supplier_returns_list->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 require_once '../includes/header.php'; 
 ?>
@@ -1364,6 +1552,27 @@ require_once '../includes/header.php';
                 <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] == 'supplier_returned'): ?>
+            <div class="alert alert-info alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
+                <i class="bi bi-arrow-counterclockwise me-2"></i>
+                <div class="flex-grow-1 small">تم تسجيل مرتجع المشتريات وتحديث المخزون والحسابات</div>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] == 'supplier_return_deleted'): ?>
+            <div class="alert alert-warning alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
+                <i class="bi bi-trash-fill me-2"></i>
+                <div class="flex-grow-1 small">تم حذف مرتجع المشتريات وعكس أثره</div>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] == 'return_error'): ?>
+            <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center mb-3 py-2" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                <div class="flex-grow-1 small">تعذر تنفيذ عملية المرتجع. راجع البيانات المتاحة.</div>
+                <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- Stats Cards (مصغرة) -->
         <div class="stats-grid fade-in">
@@ -1456,6 +1665,9 @@ require_once '../includes/header.php';
                                     <td class="text-center">
                                         <button class="btn-view view-details ripple-effect" data-id="<?= $purchase['id'] ?>" title="عرض التفاصيل">
                                             <i class="bi bi-eye"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-primary ms-1" onclick="openPurchaseReturnModal(<?= (int)$purchase['id'] ?>)">
+                                            <i class="bi bi-arrow-counterclockwise"></i>
                                         </button>
                                         <form method="POST" class="d-inline" onsubmit="return confirm('تأكيد حذف فاتورة الشراء؟ سيتم عكس المخزون والحسابات.');">
                                             <input type="hidden" name="purchase_id" value="<?= (int)$purchase['id'] ?>">
@@ -1624,6 +1836,50 @@ require_once '../includes/header.php';
         </table>
     </div>
 </div>
+
+<div class="table-card fade-in mt-3">
+    <div class="table-header">
+        <h5><i class="bi bi-arrow-counterclockwise text-primary"></i> سجل مرتجعات المشتريات</h5>
+        <span class="badge bg-primary bg-opacity-10 text-primary"><?= count($returns_rows) ?></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th class="text-end">التاريخ</th>
+                    <th class="text-center">رقم الفاتورة</th>
+                    <th class="text-center">الصنف</th>
+                    <th class="text-center">الكمية</th>
+                    <th class="text-center">القيمة</th>
+                    <th class="text-center">التسوية</th>
+                    <th class="text-center">إجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if (empty($returns_rows)): ?>
+                <tr><td colspan="7" class="text-center text-muted py-3">لا توجد مرتجعات مشتريات</td></tr>
+            <?php else: ?>
+                <?php foreach ($returns_rows as $ret): ?>
+                <tr>
+                    <td class="text-end"><?= date('Y/m/d h:i A', strtotime($ret['created_at'])) ?></td>
+                    <td class="text-center"><span class="badge-id">#<?= (int)$ret['purchase_id'] ?></span></td>
+                    <td class="text-center"><?= htmlspecialchars($ret['product_name']) ?></td>
+                    <td class="text-center"><?= number_format((float)$ret['quantity'], 2) ?></td>
+                    <td class="text-center"><span class="amount-payment"><?= number_format((float)$ret['total_amount'], 2) ?> ج.م</span></td>
+                    <td class="text-center"><span class="payment-method-badge"><?= htmlspecialchars($ret['settlement_method']) ?></span></td>
+                    <td class="text-center">
+                        <form method="POST" class="d-inline" onsubmit="return confirm('حذف المرتجع؟ سيتم عكس الأثر المحاسبي');">
+                            <input type="hidden" name="return_id" value="<?= (int)$ret['id'] ?>">
+                            <button type="submit" name="delete_supplier_return" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
             
             <!-- Pagination for Payments -->
             <?php if ($total_payments_pages > 1): ?>
@@ -1761,6 +2017,48 @@ require_once '../includes/header.php';
         </div>
     </div>
 
+    <div class="modal fade" id="purchaseReturnModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <form method="POST" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-arrow-counterclockwise me-2"></i>مرتجع مشتريات</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="purchase_id" id="returnPurchaseId">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">اختر الصنف</label>
+                        <select name="purchase_item_id" id="returnPurchaseItemSelect" class="form-select" required></select>
+                        <small class="text-muted d-block mt-1" id="returnPurchaseAvailText">—</small>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">الكمية المرتجعة</label>
+                            <input type="number" name="return_qty" id="returnQtyInput" min="0.01" step="0.01" value="1" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">طريقة التسوية</label>
+                            <select name="settlement_method" class="form-select">
+                                <option value="adjust_balance">خصم من حساب المورد</option>
+                                <option value="cash">رد نقدي</option>
+                                <option value="vodafone">رد فودافون</option>
+                                <option value="bank">رد بنكي</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label small fw-bold">ملاحظات</label>
+                        <input type="text" name="return_notes" class="form-control" placeholder="اختياري">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">إلغاء</button>
+                    <button type="submit" name="process_supplier_return" class="btn btn-primary btn-sm">تأكيد المرتجع</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Floating Action Buttons for Mobile -->
     <div class="fab-container d-md-none">
         <button class="fab-button success ripple-effect" data-bs-toggle="modal" data-bs-target="#payModal">
@@ -1881,6 +2179,44 @@ require_once '../includes/header.php';
                     .then(data => contentDiv.innerHTML = data)
                     .catch(() => contentDiv.innerHTML = '<div class="alert alert-danger m-3">حدث خطأ</div>');
             });
+        });
+
+        function openPurchaseReturnModal(purchaseId) {
+            document.getElementById('returnPurchaseId').value = purchaseId;
+            const select = document.getElementById('returnPurchaseItemSelect');
+            const availText = document.getElementById('returnPurchaseAvailText');
+            select.innerHTML = '<option>جاري التحميل...</option>';
+            fetch(`supplier_report.php?id=<?= (int)$supplier_id ?>&action=purchase_items&purchase_id=${purchaseId}`)
+                .then(r => r.json())
+                .then(res => {
+                    const options = (res.items || []).filter(i => Number(i.available_qty) > 0);
+                    if (!options.length) {
+                        select.innerHTML = '<option>لا توجد بنود صالحة للمرتجع</option>';
+                    } else {
+                        select.innerHTML = '';
+                        options.forEach((o) => {
+                            const op = document.createElement('option');
+                            op.value = o.id;
+                            op.dataset.qty = o.available_qty;
+                            op.textContent = `${o.product_name} - متاح: ${Number(o.available_qty).toFixed(2)} - سعر: ${Number(o.purchase_price).toFixed(2)}`;
+                            select.appendChild(op);
+                        });
+                        availText.innerText = `المتاح: ${Number(options[0].available_qty).toFixed(2)}`;
+                    }
+                    const modal = new bootstrap.Modal(document.getElementById('purchaseReturnModal'));
+                    modal.show();
+                })
+                .catch(() => {
+                    select.innerHTML = '<option>تعذر تحميل البنود</option>';
+                    const modal = new bootstrap.Modal(document.getElementById('purchaseReturnModal'));
+                    modal.show();
+                });
+        }
+
+        document.getElementById('returnPurchaseItemSelect')?.addEventListener('change', function() {
+            const selected = this.options[this.selectedIndex];
+            const qty = parseFloat(selected?.dataset?.qty || '0');
+            document.getElementById('returnPurchaseAvailText').innerText = `المتاح: ${qty}`;
         });
 
         // ========== AUTO-DISMISS ALERTS ==========

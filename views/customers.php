@@ -203,9 +203,9 @@ require_once '../includes/header.php';
     }
 </style>
 
-<div class="theme-toggle" id="themeBtn" onclick="toggleTheme()">
+<!-- <div class="theme-toggle" id="themeBtn" onclick="toggleTheme()">
     <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
-</div>
+</div> -->
 
 <div class="container-fluid py-4">
     <div class="page-header d-flex flex-column flex-md-row justify-content-between align-items-center gap-3">

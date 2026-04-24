@@ -5,6 +5,124 @@
 require_once '../includes/db_connect.php';
 require_once '../includes/auth.php';
 
+// --- 0. قالب استيراد (Excel-ready CSV) ---
+if (isset($_GET['action']) && $_GET['action'] === 'download_import_template') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=products_import_template.csv');
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+    fputcsv($out, ['category_name', 'product_name', 'barcode', 'cost_price', 'selling_price', 'min_selling_price', 'stock_quantity']);
+    fputcsv($out, ['موبايلات', 'سامسونج A55', '8800011223344', '12000', '13500', '12500', '10']);
+    fputcsv($out, ['اكسسوارات', 'شاحن تايب سي', '8800011223345', '120', '180', '150', '50']);
+    fclose($out);
+    exit;
+}
+
+// --- 0.1 استيراد ملف الفئات + الأصناف ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_products_sheet'])) {
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        $_SESSION['msg'] = "رمز الأمان غير صالح";
+        $_SESSION['msg_type'] = "danger";
+        header("Location: products.php");
+        exit();
+    }
+
+    if (empty($_FILES['import_file']['tmp_name']) || !is_uploaded_file($_FILES['import_file']['tmp_name'])) {
+        $_SESSION['msg'] = "يرجى اختيار ملف CSV صالح للاستيراد";
+        $_SESSION['msg_type'] = "warning";
+        header("Location: products.php");
+        exit();
+    }
+
+    $filePath = $_FILES['import_file']['tmp_name'];
+    $handle = fopen($filePath, 'r');
+    if (!$handle) {
+        $_SESSION['msg'] = "تعذر قراءة الملف";
+        $_SESSION['msg_type'] = "danger";
+        header("Location: products.php");
+        exit();
+    }
+
+    $added = 0;
+    $updated = 0;
+    $rowNum = 0;
+    try {
+        $pdo->beginTransaction();
+        while (($row = fgetcsv($handle)) !== false) {
+            $rowNum++;
+            if ($rowNum === 1) {
+                continue;
+            }
+            if (count($row) < 7) {
+                continue;
+            }
+
+            [$categoryName, $productName, $barcode, $cost, $sell, $minSell, $stock] = array_map('trim', $row);
+            if ($productName === '') {
+                continue;
+            }
+
+            $cost = (float)$cost;
+            $sell = (float)$sell;
+            $minSell = (float)$minSell;
+            $stock = (float)$stock;
+            if ($sell < $cost) {
+                $sell = $cost;
+            }
+            if ($minSell > $sell) {
+                $minSell = $sell;
+            }
+
+            $catId = null;
+            if ($categoryName !== '') {
+                $catStmt = $pdo->prepare("SELECT id FROM categories WHERE name = ? AND deleted_at IS NULL LIMIT 1");
+                $catStmt->execute([$categoryName]);
+                $catId = $catStmt->fetchColumn();
+                if (!$catId) {
+                    $pdo->prepare("INSERT INTO categories (name) VALUES (?)")->execute([$categoryName]);
+                    $catId = (int)$pdo->lastInsertId();
+                }
+            }
+            if (!$catId) {
+                $catId = (int)($pdo->query("SELECT id FROM categories WHERE deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetchColumn() ?: 1);
+            }
+
+            $existing = null;
+            if ($barcode !== '') {
+                $st = $pdo->prepare("SELECT id FROM products WHERE barcode = ? AND deleted_at IS NULL LIMIT 1");
+                $st->execute([$barcode]);
+                $existing = $st->fetchColumn();
+            }
+            if (!$existing) {
+                $st = $pdo->prepare("SELECT id FROM products WHERE name = ? AND deleted_at IS NULL LIMIT 1");
+                $st->execute([$productName]);
+                $existing = $st->fetchColumn();
+            }
+
+            if ($existing) {
+                $pdo->prepare("UPDATE products SET name = ?, barcode = ?, category_id = ?, cost_price = ?, selling_price = ?, min_selling_price = ?, stock_quantity = ? WHERE id = ?")
+                    ->execute([$productName, $barcode, $catId, $cost, $sell, $minSell, $stock, (int)$existing]);
+                $updated++;
+            } else {
+                $pdo->prepare("INSERT INTO products (name, barcode, category_id, cost_price, selling_price, min_selling_price, stock_quantity) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                    ->execute([$productName, $barcode, $catId, $cost, $sell, $minSell, $stock]);
+                $added++;
+            }
+        }
+        fclose($handle);
+        $pdo->commit();
+        $_SESSION['msg'] = "✅ تم الاستيراد بنجاح - مضاف: {$added} | محدث: {$updated}";
+        $_SESSION['msg_type'] = "success";
+    } catch (Throwable $e) {
+        fclose($handle);
+        $pdo->rollBack();
+        $_SESSION['msg'] = "❌ فشل الاستيراد: " . $e->getMessage();
+        $_SESSION['msg_type'] = "danger";
+    }
+    header("Location: products.php");
+    exit();
+}
+
 // --- 1. منطق الحذف (بدون تغيير) ---
 if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
@@ -395,6 +513,12 @@ a.filter-btn:hover {
         </div>
         
         <div class="d-flex gap-3 align-items-center">
+            <a href="products.php?action=download_import_template" class="btn btn-outline-primary rounded-pill px-3 py-2 fw-bold">
+                <i class="bi bi-file-earmark-arrow-down me-1"></i> قالب الاستيراد
+            </a>
+            <button class="btn btn-outline-success rounded-pill px-3 py-2 fw-bold" data-bs-toggle="modal" data-bs-target="#importProductsModal">
+                <i class="bi bi-upload me-1"></i> استيراد ملف
+            </button>
             <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm" data-bs-toggle="modal" data-bs-target="#productModal">
                 <i class="bi bi-plus-circle-fill me-2"></i> إضافة صنف جديد
             </button>
@@ -560,6 +684,29 @@ a.filter-btn:hover {
         </ul>
     </nav>
     <?php endif; ?>
+</div>
+
+<div class="modal fade" id="importProductsModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" enctype="multipart/form-data" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-upload me-2"></i>استيراد فئات وأصناف</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                <div class="alert alert-info small mb-3">
+                    استخدم القالب الجاهز ثم ارفع ملف CSV. يمكن فتحه وتعديله ببرنامج Excel.
+                </div>
+                <label class="form-label small fw-bold">ملف CSV</label>
+                <input type="file" name="import_file" class="form-control" accept=".csv,text/csv" required>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">إلغاء</button>
+                <button type="submit" name="import_products_sheet" class="btn btn-success btn-sm">بدء الاستيراد</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <div class="modal fade" id="productModal" tabindex="-1">

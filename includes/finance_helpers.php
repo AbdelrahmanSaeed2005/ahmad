@@ -101,6 +101,44 @@ function ensure_finance_schema(PDO $pdo): void {
     $pdo->exec("INSERT INTO wallets (wallet_name, balance) SELECT 'vodafone', 0 WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_name = 'vodafone')");
     $pdo->exec("INSERT INTO wallets (wallet_name, balance) SELECT 'bank', 0 WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_name = 'bank')");
 
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS customer_returns (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT NOT NULL,
+            invoice_id INT NOT NULL,
+            invoice_item_id INT NOT NULL,
+            product_id INT NOT NULL,
+            quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
+            unit_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+            total_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+            refund_method VARCHAR(20) NOT NULL DEFAULT 'adjust_balance',
+            cash_transaction_id INT NULL,
+            notes VARCHAR(255) NULL,
+            user_id INT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP NULL DEFAULT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS supplier_returns (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            supplier_id INT NOT NULL,
+            purchase_id INT NOT NULL,
+            purchase_item_id INT NOT NULL,
+            product_name VARCHAR(255) NOT NULL,
+            quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
+            unit_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+            total_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+            settlement_method VARCHAR(20) NOT NULL DEFAULT 'adjust_balance',
+            cash_transaction_id INT NULL,
+            notes VARCHAR(255) NULL,
+            user_id INT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP NULL DEFAULT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
     finance_invalidate_column_cache();
 }
 

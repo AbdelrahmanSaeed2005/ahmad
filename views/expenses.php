@@ -299,9 +299,9 @@ require_once '../includes/header.php';
 <div class="container-fluid py-4">
     <div class="page-header">
         <div class="d-flex align-items-center gap-3">
-            <button class="theme-toggle-btn" id="themeBtn" title="تبديل الوضع">
+            <!-- <button class="theme-toggle-btn" id="themeBtn" title="تبديل الوضع">
                 <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
-            </button>
+            </button> -->
             <div>
                 <h2 class="h4 mb-0 fw-bold">إدارة المصروفات العامة</h2>
                 <p class="text-muted mb-0 small">تتبع وخصم النفقات التشغيلية للمؤسسة</p>

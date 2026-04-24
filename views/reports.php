@@ -26,8 +26,13 @@ try {
     $gross_sales = $stmt->fetchColumn() ?: 0;
     
     // [2] ✅ إجمالي المرتجعات للفترة
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(return_price), 0) FROM returns WHERE created_at BETWEEN ? AND ?");
-    $stmt->execute([$query_start, $query_end]);
+    $stmt = $pdo->prepare("
+        SELECT
+            (SELECT COALESCE(SUM(return_price), 0) FROM returns WHERE created_at BETWEEN ? AND ?)
+            +
+            (SELECT COALESCE(SUM(total_amount), 0) FROM customer_returns WHERE created_at BETWEEN ? AND ? AND deleted_at IS NULL)
+    ");
+    $stmt->execute([$query_start, $query_end, $query_start, $query_end]);
     $total_returns = $stmt->fetchColumn() ?: 0;
     
     // [3] ✅ صافي المبيعات بعد خصم المرتجعات
@@ -61,13 +66,22 @@ try {
     $total_cost_sales = $stmt->fetchColumn() ?: 0;
 
     $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(r.quantity * p.cost_price), 0) AS cogs_returns
-        FROM returns r
-        JOIN products p ON r.product_id = p.id
-        WHERE r.created_at BETWEEN ? AND ?
-          AND p.deleted_at IS NULL
+        SELECT COALESCE(SUM(x.cogs_returns), 0) FROM (
+            SELECT (r.quantity * p.cost_price) AS cogs_returns
+            FROM returns r
+            JOIN products p ON r.product_id = p.id
+            WHERE r.created_at BETWEEN ? AND ?
+              AND p.deleted_at IS NULL
+            UNION ALL
+            SELECT (cr.quantity * p.cost_price) AS cogs_returns
+            FROM customer_returns cr
+            JOIN products p ON cr.product_id = p.id
+            WHERE cr.created_at BETWEEN ? AND ?
+              AND cr.deleted_at IS NULL
+              AND p.deleted_at IS NULL
+        ) x
     ");
-    $stmt->execute([$query_start, $query_end]);
+    $stmt->execute([$query_start, $query_end, $query_start, $query_end]);
     $total_cost_returns = $stmt->fetchColumn() ?: 0;
 
     $total_cost = $total_cost_sales - $total_cost_returns;
@@ -119,21 +133,43 @@ try {
         ) s
         LEFT JOIN (
             SELECT
-                p.id AS product_id,
-                SUM(r.quantity) AS ret_qty,
-                SUM(r.return_price) AS ret_revenue,
-                SUM(r.quantity * p.cost_price) AS ret_cost,
-                SUM(r.return_price - (p.cost_price * r.quantity)) AS ret_profit
-            FROM returns r
-            JOIN products p ON r.product_id = p.id
-            WHERE r.created_at BETWEEN ? AND ?
-              AND p.deleted_at IS NULL
-            GROUP BY p.id
+                x.product_id,
+                SUM(x.ret_qty) AS ret_qty,
+                SUM(x.ret_revenue) AS ret_revenue,
+                SUM(x.ret_cost) AS ret_cost,
+                SUM(x.ret_profit) AS ret_profit
+            FROM (
+                SELECT
+                    p.id AS product_id,
+                    SUM(r.quantity) AS ret_qty,
+                    SUM(r.return_price) AS ret_revenue,
+                    SUM(r.quantity * p.cost_price) AS ret_cost,
+                    SUM(r.return_price - (p.cost_price * r.quantity)) AS ret_profit
+                FROM returns r
+                JOIN products p ON r.product_id = p.id
+                WHERE r.created_at BETWEEN ? AND ?
+                  AND p.deleted_at IS NULL
+                GROUP BY p.id
+                UNION ALL
+                SELECT
+                    p.id AS product_id,
+                    SUM(cr.quantity) AS ret_qty,
+                    SUM(cr.total_amount) AS ret_revenue,
+                    SUM(cr.quantity * p.cost_price) AS ret_cost,
+                    SUM(cr.total_amount - (p.cost_price * cr.quantity)) AS ret_profit
+                FROM customer_returns cr
+                JOIN products p ON cr.product_id = p.id
+                WHERE cr.created_at BETWEEN ? AND ?
+                  AND cr.deleted_at IS NULL
+                  AND p.deleted_at IS NULL
+                GROUP BY p.id
+            ) x
+            GROUP BY x.product_id
         ) r ON r.product_id = s.product_id
         WHERE (s.total_sold_qty - COALESCE(r.ret_qty,0)) <> 0
         ORDER BY profit DESC
     ");
-    $stmt->execute([$query_start, $query_end, $query_start, $query_end]);
+    $stmt->execute([$query_start, $query_end, $query_start, $query_end, $query_start, $query_end]);
     $product_profit_rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 } catch (PDOException $e) {

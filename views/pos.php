@@ -205,6 +205,11 @@ $customers = $pdo->query("SELECT id, name, {$customerPhoneSelect} AS phone_numbe
 require_once '../includes/header.php'; 
 ?>
 
+<!-- Select2 for searchable customer dropdown -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
 <style>
     /* جميع الـ CSS الموجود كما هو - بدون تغيير */
     :root {
@@ -1002,6 +1007,115 @@ require_once '../includes/header.php';
     #barcodeReader video {
         object-fit: cover;
     }
+
+    /* ===== Select2 Custom Styling ===== */
+    .select2-container {
+        width: 100% !important;
+        display: block;
+    }
+
+    .select2-container .select2-selection--single {
+        height: auto !important;
+        padding: 0.75rem 2.5rem 0.75rem 0.75rem !important;
+        border: 2px solid var(--border-color) !important;
+        border-radius: 12px !important;
+        background-color: #ffffff !important;
+        color: var(--text-main) !important;
+        font-size: 0.95rem !important;
+        line-height: 1.5 !important;
+        transition: var(--transition);
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        padding-right: 0 !important;
+        padding-left: 0 !important;
+        color: var(--text-main) !important;
+        line-height: inherit !important;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 100% !important;
+        top: 0 !important;
+        left: 10px !important;
+        right: auto !important;
+        width: 24px !important;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__arrow b {
+        border-color: var(--text-muted) transparent transparent transparent !important;
+        border-width: 5px 5px 0 5px !important;
+    }
+
+    .select2-dropdown {
+        border: 1px solid var(--border-color) !important;
+        border-radius: 12px !important;
+        box-shadow: var(--shadow-md) !important;
+        margin-top: 4px !important;
+        overflow: hidden !important;
+        background: var(--bg-card) !important;
+        z-index: 1060 !important;
+    }
+
+    .select2-results__option {
+        padding: 0.75rem 1rem !important;
+        color: var(--text-main) !important;
+        font-size: 0.95rem !important;
+        text-align: right !important;
+    }
+
+    .select2-container--default .select2-results__option--highlighted[aria-selected] {
+        background-color: rgba(79, 70, 229, 0.08) !important;
+        color: var(--primary-color) !important;
+    }
+
+    .select2-container--default .select2-results__option[aria-selected="true"] {
+        background-color: var(--primary-color) !important;
+        color: #ffffff !important;
+    }
+
+    .select2-search--dropdown .select2-search__field {
+        border: 2px solid var(--border-color) !important;
+        border-radius: 8px !important;
+        padding: 0.5rem !important;
+        text-align: right !important;
+        outline: none !important;
+        background: var(--bg-card) !important;
+        color: var(--text-main) !important;
+    }
+
+    .select2-search--dropdown .select2-search__field:focus {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1) !important;
+    }
+
+    .select2-container--default .select2-selection--single:focus,
+    .select2-container--default.select2-container--focus .select2-selection--single,
+    .select2-container--default.select2-container--open .select2-selection--single {
+        border-color: var(--primary-color) !important;
+        outline: none !important;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1) !important;
+    }
+
+    .select2-container--default .select2-selection__placeholder {
+        color: var(--text-muted) !important;
+    }
+
+    /* Dark mode support for Select2 */
+    [data-theme="dark"] .select2-container .select2-selection--single {
+        background-color: var(--bg-card) !important;
+        border-color: var(--border-color) !important;
+    }
+
+    [data-theme="dark"] .select2-dropdown {
+        background: var(--bg-card) !important;
+        border-color: var(--border-color) !important;
+    }
+
+    [data-theme="dark"] .select2-search--dropdown .select2-search__field {
+        background: var(--bg-card) !important;
+        color: var(--text-main) !important;
+        border-color: var(--border-color) !important;
+    }
 </style>
 
 <div class="pos-container">
@@ -1089,19 +1203,12 @@ require_once '../includes/header.php';
                 </button>
             </div>
 
-            <!-- قسم العميل المسجل مع إضافة البحث -->
+            <!-- قسم العميل المسجل -->
             <div id="registeredCustomerDiv">
                 <div class="mb-3">
-                    <label class="form-label small fw-bold text-primary">اختر العميل المسجل</label>
-                    
-                    <!-- ✅ إضافة حقل البحث عن العملاء -->
-                    <div class="customer-search-container">
-                        <input type="text" class="customer-search-input" id="customerSearch" placeholder="ابحث باسم العميل...">
-                        <div class="customer-search-results" id="customerSearchResults"></div>
-                    </div>
-                    
-                    <select class="form-select" id="customerId" style="display: none;" onchange="updateCustomerInfo()">
-                        <option value="">-- اختر العميل --</option>
+                    <label class="form-label small fw-bold text-primary">العميل المستهدف</label>
+                    <select class="form-select" id="customerId" onchange="updateCustomerInfo()">
+                        <option value="">-- ابحث عن اسم العميل --</option>
                         <?php foreach($customers as $c): ?>
                             <option value="<?= $c['id'] ?>" data-phone="<?= htmlspecialchars($c['phone_number'] ?? '') ?>">
                                 <?= htmlspecialchars($c['name']) ?> 
@@ -1395,7 +1502,7 @@ function initUsbBarcodeScannerRouting() {
         if (tag === 'input') {
             const id = active.id || '';
             if (id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone' || id === 'invoiceDiscount') return;
-            if (active.classList.contains('qty-input') || active.classList.contains('price-input')) return;
+            if (active.classList.contains('qty-input') || active.classList.contains('price-input') || active.classList.contains('select2-search__field')) return;
         }
         if (tag === 'select' || tag === 'option') return;
 
@@ -1518,6 +1625,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // تهيئة البحث عن العملاء
     initCustomerSearch();
 
+    // تهيئة Select2 للعميل المسجل
+    if (typeof $.fn.select2 !== 'undefined') {
+        $('#customerId').select2({
+            dir: 'rtl',
+            placeholder: '-- ابحث عن اسم العميل --',
+            allowClear: true,
+            width: '100%',
+            language: {
+                noResults: function() { return 'لا توجد نتائج'; },
+                searching: function() { return 'جاري البحث...'; }
+            }
+        });
+        $('#customerId').on('change', function() {
+            updateCustomerInfo();
+        });
+    }
+
     focusProductSearch();
     document.getElementById('btnFocusSearch').addEventListener('click', focusProductSearch);
 
@@ -1557,7 +1681,7 @@ function initScannerListener() {
         const id = active ? active.id : '';
 
         // Skip if in qty/price or customer fields
-        if (tag === 'input' && (active.classList.contains('qty-input') || active.classList.contains('price-input') || id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone' || id === 'invoiceDiscount')) return;
+        if (tag === 'input' && (active.classList.contains('qty-input') || active.classList.contains('price-input') || active.classList.contains('select2-search__field') || id === 'customerSearch' || id === 'walkinName' || id === 'walkinPhone' || id === 'invoiceDiscount')) return;
         if (tag === 'select' || tag === 'textarea' || active.isContentEditable) return;
 
         const key = e.key;
@@ -2035,6 +2159,7 @@ function processSale() {
     .then(res => res.json())
     .then(res => {
         if(res.success) {
+            new Audio('/project/ahmad/beep.mp3').play();
             showToast(res.msg, 'success');
             cart = [];
             renderCart();
@@ -2046,7 +2171,11 @@ function processSale() {
             document.getElementById('walkinName').value = 'عميل نقدي';
             document.getElementById('walkinPhone').value = '';
             document.getElementById('customerId').value = '';
-            document.getElementById('customerSearch').value = '';
+            if (window.jQuery && $('#customerId').data('select2')) {
+                $('#customerId').val(null).trigger('change');
+            }
+            const customerSearch = document.getElementById('customerSearch');
+            if (customerSearch) customerSearch.value = '';
             const customerSearchResults = document.getElementById('customerSearchResults');
             if (customerSearchResults) customerSearchResults.style.display = 'none';
             hideScanPreview();

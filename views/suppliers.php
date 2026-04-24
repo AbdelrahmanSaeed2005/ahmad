@@ -190,9 +190,9 @@ require_once '../includes/header.php';
     }
 </style>
 
-<button class="theme-switch" id="themeToggle" title="تبديل الوضع">
+<!-- <button class="theme-switch" id="themeToggle" title="تبديل الوضع">
     <i class="bi bi-sun-fill" id="themeIcon"></i>
-</button>
+</button> -->
 
 <div class="container-fluid py-4" dir="rtl">
     <div class="row align-items-center mb-5 g-3 animate-in">

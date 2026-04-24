@@ -81,9 +81,14 @@ $last_withdraw = $pdo->query("SELECT MAX(created_at) FROM profit_withdrawals")->
 $filter_date = $last_withdraw ? $last_withdraw : '2000-01-01 00:00:00';
 $today = date('Y-m-d');
 
-// مبيعات اليوم (مع خصم المرتجعات)
-$stmt = $pdo->prepare("SELECT (SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE type='income' AND related_type='sale' AND DATE(created_at) = ?) - (SELECT COALESCE(SUM(amount), 0) FROM cash_transactions WHERE related_type='return' AND DATE(created_at) = ?)");
-$stmt->execute([$today, $today]);
+// مبيعات اليوم (مع خصم جميع أنواع المرتجعات)
+$stmt = $pdo->prepare("
+    SELECT
+      (SELECT COALESCE(SUM(total_amount),0) FROM invoices WHERE DATE(created_at) = ?)
+      - (SELECT COALESCE(SUM(return_price), 0) FROM returns WHERE DATE(created_at) = ?)
+      - (SELECT COALESCE(SUM(total_amount), 0) FROM customer_returns WHERE DATE(created_at) = ? AND deleted_at IS NULL)
+");
+$stmt->execute([$today, $today, $today]);
 $today_sales = $stmt->fetchColumn() ?: 0;
 
 // المصاريف
@@ -110,9 +115,21 @@ $stmt = $pdo->prepare("
 $stmt->execute([$filter_date]);
 $sales_profit = $stmt->fetchColumn() ?: 0;
 
-// خسائر المرتجعات
-$stmt = $pdo->prepare("SELECT SUM((r.return_price - (p.cost_price * r.quantity))) FROM returns r JOIN products p ON r.product_id = p.id WHERE r.created_at > ?");
-$stmt->execute([$filter_date]);
+// خسائر المرتجعات (مرتجع مباشر + مرتجع فواتير العملاء)
+$stmt = $pdo->prepare("
+    SELECT COALESCE(SUM(x.loss), 0) FROM (
+        SELECT (r.return_price - (p.cost_price * r.quantity)) AS loss
+        FROM returns r
+        JOIN products p ON r.product_id = p.id
+        WHERE r.created_at > ?
+        UNION ALL
+        SELECT (cr.total_amount - (p.cost_price * cr.quantity)) AS loss
+        FROM customer_returns cr
+        JOIN products p ON p.id = cr.product_id
+        WHERE cr.created_at > ? AND cr.deleted_at IS NULL
+    ) x
+");
+$stmt->execute([$filter_date, $filter_date]);
 $returns_loss = $stmt->fetchColumn() ?: 0;
 $gross_profit = $sales_profit - $returns_loss;
 $net_profit = $gross_profit - $total_expenses;

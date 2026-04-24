@@ -7,6 +7,170 @@ require_once '../includes/auth.php';
 
 $customer_id = $_GET['id'] ?? 0;
 
+if (isset($_GET['action'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $action = $_GET['action'];
+
+    if ($action === 'invoice_items') {
+        $invoice_id = (int)($_GET['invoice_id'] ?? 0);
+        $stmt = $pdo->prepare("
+            SELECT ii.id, ii.product_id, ii.quantity, ii.price, p.name
+            FROM invoice_items ii
+            JOIN products p ON p.id = ii.product_id
+            JOIN invoices i ON i.id = ii.invoice_id
+            WHERE ii.invoice_id = ? AND i.customer_id = ?
+        ");
+        $stmt->execute([$invoice_id, $customer_id]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        foreach ($items as &$item) {
+            $retStmt = $pdo->prepare("SELECT COALESCE(SUM(quantity), 0) FROM customer_returns WHERE invoice_item_id = ? AND deleted_at IS NULL");
+            $retStmt->execute([(int)$item['id']]);
+            $returned = (float)$retStmt->fetchColumn();
+            $item['returned_qty'] = $returned;
+            $item['available_qty'] = max(0, (float)$item['quantity'] - $returned);
+        }
+        unset($item);
+
+        echo json_encode(['success' => true, 'items' => $items], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'process_customer_return') {
+        $data = json_decode(file_get_contents('php://input'), true) ?: [];
+        $invoice_id = (int)($data['invoice_id'] ?? 0);
+        $invoice_item_id = (int)($data['invoice_item_id'] ?? 0);
+        $quantity = (float)($data['quantity'] ?? 0);
+        $refund_method = (string)($data['refund_method'] ?? 'adjust_balance');
+        $notes = trim((string)($data['notes'] ?? ''));
+        $user_id = (int)($_SESSION['user_id'] ?? 0);
+
+        if ($quantity <= 0 || $invoice_id <= 0 || $invoice_item_id <= 0 || $user_id <= 0) {
+            echo json_encode(['success' => false, 'msg' => 'بيانات المرتجع غير صحيحة'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $allowed_methods = ['adjust_balance', 'cash', 'vodafone', 'bank'];
+        if (!in_array($refund_method, $allowed_methods, true)) {
+            $refund_method = 'adjust_balance';
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            $invStmt = $pdo->prepare("SELECT id, customer_id, payment_method FROM invoices WHERE id = ? LIMIT 1");
+            $invStmt->execute([$invoice_id]);
+            $invoice = $invStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$invoice || (int)$invoice['customer_id'] !== (int)$customer_id) {
+                throw new Exception('الفاتورة لا تتبع هذا العميل');
+            }
+
+            $itemStmt = $pdo->prepare("
+                SELECT ii.id, ii.product_id, ii.quantity, ii.price, p.name
+                FROM invoice_items ii
+                JOIN products p ON p.id = ii.product_id
+                WHERE ii.id = ? AND ii.invoice_id = ?
+                LIMIT 1
+            ");
+            $itemStmt->execute([$invoice_item_id, $invoice_id]);
+            $item = $itemStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$item) {
+                throw new Exception('الصنف غير موجود داخل الفاتورة');
+            }
+
+            $retSumStmt = $pdo->prepare("SELECT COALESCE(SUM(quantity), 0) FROM customer_returns WHERE invoice_item_id = ? AND deleted_at IS NULL");
+            $retSumStmt->execute([$invoice_item_id]);
+            $alreadyReturned = (float)$retSumStmt->fetchColumn();
+            $availableQty = (float)$item['quantity'] - $alreadyReturned;
+            if ($quantity > $availableQty + 0.0001) {
+                throw new Exception('الكمية المرتجعة أكبر من المتاح');
+            }
+
+            $unit_price = (float)$item['price'];
+            $total_amount = $unit_price * $quantity;
+            $cash_tx_id = null;
+
+            $pdo->prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?")
+                ->execute([$quantity, (int)$item['product_id']]);
+
+            if ((string)$invoice['payment_method'] === 'credit') {
+                $pdo->prepare("UPDATE customers SET balance = balance - ? WHERE id = ?")
+                    ->execute([$total_amount, $customer_id]);
+            }
+
+            if ($refund_method !== 'adjust_balance') {
+                $desc = "مرتجع من فاتورة عميل #{$invoice_id} - " . $item['name'] . " (كمية: {$quantity})";
+                $cash_tx_id = recordTransaction($pdo, [
+                    'direction' => 'out',
+                    'amount' => $total_amount,
+                    'payment_method' => $refund_method,
+                    'description' => $desc,
+                    'user_id' => $user_id,
+                    'related_type' => 'customer_return',
+                    'related_id' => $invoice_id,
+                ]);
+            }
+
+            $ins = $pdo->prepare("
+                INSERT INTO customer_returns
+                (customer_id, invoice_id, invoice_item_id, product_id, quantity, unit_price, total_amount, refund_method, cash_transaction_id, notes, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $ins->execute([
+                $customer_id, $invoice_id, $invoice_item_id, (int)$item['product_id'],
+                $quantity, $unit_price, $total_amount, $refund_method, $cash_tx_id, $notes, $user_id
+            ]);
+
+            $pdo->commit();
+            echo json_encode(['success' => true, 'msg' => 'تم تسجيل المرتجع وتحديث حساب العميل'], JSON_UNESCAPED_UNICODE);
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            echo json_encode(['success' => false, 'msg' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
+
+    if ($action === 'delete_customer_return') {
+        $return_id = (int)($_GET['return_id'] ?? 0);
+        try {
+            $pdo->beginTransaction();
+            $st = $pdo->prepare("
+                SELECT cr.*, i.payment_method, p.name AS product_name
+                FROM customer_returns cr
+                JOIN invoices i ON i.id = cr.invoice_id
+                JOIN products p ON p.id = cr.product_id
+                WHERE cr.id = ? AND cr.customer_id = ? AND cr.deleted_at IS NULL
+                LIMIT 1
+            ");
+            $st->execute([$return_id, $customer_id]);
+            $ret = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$ret) {
+                throw new Exception('المرتجع غير موجود');
+            }
+
+            $pdo->prepare("UPDATE products SET stock_quantity = GREATEST(stock_quantity - ?, 0) WHERE id = ?")
+                ->execute([(float)$ret['quantity'], (int)$ret['product_id']]);
+
+            if ((string)$ret['payment_method'] === 'credit') {
+                $pdo->prepare("UPDATE customers SET balance = balance + ? WHERE id = ?")
+                    ->execute([(float)$ret['total_amount'], $customer_id]);
+            }
+
+            if (!empty($ret['cash_transaction_id'])) {
+                $pdo->prepare("DELETE FROM cash_transactions WHERE id = ?")->execute([(int)$ret['cash_transaction_id']]);
+            }
+
+            $pdo->prepare("UPDATE customer_returns SET deleted_at = NOW() WHERE id = ?")->execute([$return_id]);
+            $pdo->commit();
+            echo json_encode(['success' => true, 'msg' => 'تم حذف المرتجع وعكس الأثر المحاسبي'], JSON_UNESCAPED_UNICODE);
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            echo json_encode(['success' => false, 'msg' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
+}
+
 // 1. جلب بيانات العميل
 $stmt = $pdo->prepare("SELECT * FROM customers WHERE id = ? AND deleted_at IS NULL");
 $stmt->execute([$customer_id]);
@@ -22,7 +186,7 @@ $collections_list = [];
 
 try {
     $sales = $pdo->prepare("SELECT 'فاتورة مبيعات' as type, id, total_amount as amount, created_at, 'sale' as category 
-                            FROM sales WHERE customer_id = ?");
+                            FROM invoices WHERE customer_id = ?");
     $sales->execute([$customer_id]);
     $sales_list = $sales->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -33,12 +197,18 @@ try {
     $collections->execute(["%العميل: " . $customer['name'] . "%"]);
     $collections_list = $collections->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+    $returns = $pdo->prepare("SELECT 'مرتجع من فاتورة' as type, id, total_amount as amount, created_at, 'customer_return' as category, refund_method as payment_method, invoice_id
+                              FROM customer_returns WHERE customer_id = ? AND deleted_at IS NULL");
+    $returns->execute([$customer_id]);
+    $returns_list = $returns->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
 } catch (PDOException $e) {
     $sales_list = [];
     $collections_list = [];
+    $returns_list = [];
 }
 
-$all_history = array_merge($sales_list, $collections_list);
+$all_history = array_merge($sales_list, $collections_list, $returns_list ?? []);
 if (!empty($all_history)) {
     usort($all_history, function($a, $b) {
         return strtotime($b['created_at']) - strtotime($a['created_at']);
@@ -196,7 +366,7 @@ require_once '../includes/header.php';
 
     /* Print Optimization */
     @media print {
-        .theme-switch, .btn-modern, .view-sale-details, .breadcrumb { display: none !important; }
+        .theme-switch, .btn-modern, .view-sale-details, .breadcrumb, .return-action-btn { display: none !important; }
         body { background: white; color: black; }
         .custom-card { border: none; box-shadow: none; }
     }
@@ -291,14 +461,21 @@ require_once '../includes/header.php';
                         </td>
                         <td><span class="badge bg-light text-dark border font-monospace">#<?= $op['id'] ?></span></td>
                         <td>
-                            <span class="badge-soft <?= $op['category'] == 'sale' ? 'bg-danger-soft' : 'bg-success-soft' ?>">
-                                <?= $op['category'] == 'sale' ? 'مديونية' : 'تحصيل' ?>
+                            <span class="badge-soft <?= $op['category'] == 'sale' ? 'bg-danger-soft' : ($op['category'] == 'customer_return' ? 'bg-danger-soft' : 'bg-success-soft') ?>">
+                                <?= $op['category'] == 'sale' ? 'مديونية' : ($op['category'] == 'customer_return' ? 'مرتجع' : 'تحصيل') ?>
                             </span>
                         </td>
                         <td class="pe-4">
                             <?php if($op['category'] == 'sale'): ?>
                                 <button class="btn btn-sm btn-outline-primary-modern view-sale-details" data-id="<?= $op['id'] ?>">
                                     <i class="bi bi-list-ul me-1"></i> الأصناف
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger return-action-btn mt-1 mt-md-0" onclick="openReturnModal(<?= (int)$op['id'] ?>)">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i> مرتجع
+                                </button>
+                            <?php elseif($op['category'] == 'customer_return'): ?>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteCustomerReturn(<?= (int)$op['id'] ?>)">
+                                    <i class="bi bi-trash me-1"></i> حذف المرتجع
                                 </button>
                             <?php else: ?>
                                 <span class="text-muted">—</span>
@@ -335,6 +512,51 @@ require_once '../includes/header.php';
             </div>
             <div class="modal-footer border-0">
                 <button type="button" class="btn btn-modern btn-secondary" data-bs-dismiss="modal">إغلاق</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="returnInvoiceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold text-danger"><i class="bi bi-arrow-counterclockwise me-2"></i>مرتجع من فاتورة عميل #<span id="returnInvoiceNumber"></span></h5>
+                <button type="button" class="btn-close ms-0 me-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">اختر الصنف</label>
+                    <select id="returnItemSelect" class="form-select"></select>
+                    <div class="small text-muted mt-1" id="returnAvailableQty"></div>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">الكمية</label>
+                        <input type="number" id="returnQtyInput" class="form-control" min="0.01" step="0.01" value="1">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">طريقة التسوية</label>
+                        <select id="refundMethodInput" class="form-select">
+                            <option value="adjust_balance">خصم من حساب العميل</option>
+                            <option value="cash">رد نقدي</option>
+                            <option value="vodafone">رد فودافون كاش</option>
+                            <option value="bank">رد بنكي</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">إجمالي المرتجع</label>
+                        <input type="text" id="returnTotalPreview" class="form-control fw-bold text-danger" readonly value="0.00">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">ملاحظة</label>
+                        <input type="text" id="returnNotesInput" class="form-control" placeholder="اختياري">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إغلاق</button>
+                <button type="button" class="btn btn-danger" onclick="submitCustomerReturn()"><i class="bi bi-check-circle me-1"></i>تأكيد المرتجع</button>
             </div>
         </div>
     </div>
@@ -378,6 +600,112 @@ themeToggler.addEventListener('click', () => {
 const savedTheme = localStorage.getItem('theme') || 'light';
 body.setAttribute('data-theme', savedTheme);
 setEmoji(savedTheme === 'dark');
+
+let activeReturnInvoiceId = null;
+let returnInvoiceItems = [];
+
+function renderReturnItemOptions() {
+    const select = document.getElementById('returnItemSelect');
+    select.innerHTML = '';
+    returnInvoiceItems.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.id;
+        opt.dataset.price = item.price;
+        opt.dataset.available = item.available_qty;
+        opt.textContent = `${item.name} | سعر: ${Number(item.price).toFixed(2)} | متاح للمرتجع: ${Number(item.available_qty).toFixed(2)}`;
+        select.appendChild(opt);
+    });
+    updateReturnPreview();
+}
+
+function updateReturnPreview() {
+    const select = document.getElementById('returnItemSelect');
+    const qty = parseFloat(document.getElementById('returnQtyInput').value || '0');
+    const selected = select.options[select.selectedIndex];
+    if (!selected) return;
+
+    const unitPrice = parseFloat(selected.dataset.price || '0');
+    const available = parseFloat(selected.dataset.available || '0');
+    document.getElementById('returnAvailableQty').innerText = `المتاح: ${available.toFixed(2)}`;
+    document.getElementById('returnTotalPreview').value = (unitPrice * qty).toFixed(2);
+}
+
+function openReturnModal(invoiceId) {
+    activeReturnInvoiceId = invoiceId;
+    document.getElementById('returnInvoiceNumber').innerText = invoiceId;
+    fetch(`customer_report.php?id=<?= (int)$customer_id ?>&action=invoice_items&invoice_id=${invoiceId}`)
+        .then(res => res.json())
+        .then(res => {
+            if (!res.success) {
+                alert('تعذر تحميل أصناف الفاتورة');
+                return;
+            }
+            returnInvoiceItems = (res.items || []).filter(i => Number(i.available_qty) > 0);
+            if (returnInvoiceItems.length === 0) {
+                alert('لا توجد كميات متاحة للمرتجع في هذه الفاتورة');
+                return;
+            }
+            renderReturnItemOptions();
+            const modal = new bootstrap.Modal(document.getElementById('returnInvoiceModal'));
+            modal.show();
+        })
+        .catch(() => alert('حدث خطأ أثناء تحميل بيانات الفاتورة'));
+}
+
+function submitCustomerReturn() {
+    const select = document.getElementById('returnItemSelect');
+    const selected = select.options[select.selectedIndex];
+    if (!selected || !activeReturnInvoiceId) return;
+
+    const qty = parseFloat(document.getElementById('returnQtyInput').value || '0');
+    const available = parseFloat(selected.dataset.available || '0');
+    if (qty <= 0 || qty > available) {
+        alert('كمية المرتجع غير صحيحة');
+        return;
+    }
+
+    const payload = {
+        invoice_id: activeReturnInvoiceId,
+        invoice_item_id: parseInt(selected.value, 10),
+        quantity: qty,
+        refund_method: document.getElementById('refundMethodInput').value,
+        notes: document.getElementById('returnNotesInput').value
+    };
+
+    fetch(`customer_report.php?id=<?= (int)$customer_id ?>&action=process_customer_return`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(res => {
+        if (res.success) {
+            alert('✅ ' + res.msg);
+            location.reload();
+        } else {
+            alert('❌ ' + res.msg);
+        }
+    })
+    .catch(() => alert('خطأ أثناء تنفيذ المرتجع'));
+}
+
+function deleteCustomerReturn(returnId) {
+    if (!confirm('تأكيد حذف المرتجع؟ سيتم عكس المخزون والحسابات.')) return;
+    fetch(`customer_report.php?id=<?= (int)$customer_id ?>&action=delete_customer_return&return_id=${returnId}`)
+        .then(res => res.json())
+        .then(res => {
+            if (res.success) {
+                alert('✅ ' + res.msg);
+                location.reload();
+            } else {
+                alert('❌ ' + res.msg);
+            }
+        })
+        .catch(() => alert('خطأ أثناء حذف المرتجع'));
+}
+
+document.getElementById('returnItemSelect')?.addEventListener('change', updateReturnPreview);
+document.getElementById('returnQtyInput')?.addEventListener('input', updateReturnPreview);
 </script>
 
 <?php require_once '../includes/footer.php'; ?>
